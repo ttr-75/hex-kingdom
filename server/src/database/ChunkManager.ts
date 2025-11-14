@@ -3,7 +3,7 @@ import { HexTileState } from '../rooms/GameRoomState.js';
 import { hexToKey } from '@hex-kingdom/shared';
 import { TerrainType, ResourceType } from '@hex-kingdom/shared';
 
-const CHUNK_SIZE = 32; // 32x32 Hexagone pro Chunk
+const CHUNK_SIZE = 16; // 16x16 Hexagone pro Chunk (256 Tiles = kleinere Dokumente)
 
 export interface ChunkData {
   _id: string;
@@ -13,9 +13,9 @@ export interface ChunkData {
     q: number;
     r: number;
     terrain: TerrainType;
-    owner?: string;
     resourceType?: ResourceType;
     resourceAmount?: number;
+    // HINWEIS: 'owner' ist NICHT hier - wird in TileDataManager gespeichert!
   }>;
   lastModified: Date;
 }
@@ -112,7 +112,7 @@ export class ChunkManager {
         q: tile.q,
         r: tile.r,
         terrain: tile.terrain as TerrainType,
-        owner: tile.owner,
+        // owner wird NICHT gespeichert - siehe TileDataManager
         resourceType: tile.resourceType as ResourceType | undefined,
         resourceAmount: tile.resourceAmount
       });
@@ -131,7 +131,7 @@ export class ChunkManager {
         tile.q = tileData.q;
         tile.r = tileData.r;
         tile.terrain = tileData.terrain;
-        if (tileData.owner) tile.owner = tileData.owner;
+        // owner wird NICHT aus Chunk geladen - siehe TileDataManager
         if (tileData.resourceType) tile.resourceType = tileData.resourceType;
         if (tileData.resourceAmount) tile.resourceAmount = tileData.resourceAmount;
 

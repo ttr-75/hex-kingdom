@@ -12,8 +12,12 @@ export default function App() {
   
   const setRoom = useGameStore(state => state.setRoom);
   
-  const handleJoin = async () => {
-    if (!username.trim()) {
+  const isDevelopment = import.meta.env.DEV;
+  
+  const handleJoin = async (quickLoginName?: string) => {
+    const finalUsername = quickLoginName || username.trim();
+    
+    if (!finalUsername) {
       setError('Bitte gib einen Benutzernamen ein');
       return;
     }
@@ -22,7 +26,7 @@ export default function App() {
     setError('');
     
     try {
-      const room = await networkManager.joinOrCreate('game', { username });
+      const room = await networkManager.joinOrCreate('game', { username: finalUsername });
       setRoom(room);
       setIsConnected(true);
       
@@ -66,12 +70,34 @@ export default function App() {
             />
             
             <button 
-              onClick={handleJoin}
+              onClick={() => handleJoin()}
               disabled={isConnecting}
               className="join-btn"
             >
               {isConnecting ? 'Verbinde...' : 'Spiel beitreten'}
             </button>
+            
+            {isDevelopment && (
+              <div className="dev-quicklogin">
+                <p className="dev-label">🔧 Development Quick Login:</p>
+                <div className="dev-buttons">
+                  <button 
+                    onClick={() => handleJoin('admin')}
+                    disabled={isConnecting}
+                    className="quick-btn admin"
+                  >
+                    👑 Admin
+                  </button>
+                  <button 
+                    onClick={() => handleJoin('user')}
+                    disabled={isConnecting}
+                    className="quick-btn user"
+                  >
+                    👤 User
+                  </button>
+                </div>
+              </div>
+            )}
             
             {error && <p className="error">{error}</p>}
           </div>

@@ -14,24 +14,28 @@
 
 import { ChunkManager } from '../database/ChunkManager.js';
 import { TerrainType, ResourceType } from '../../../shared/src/types.js';
+import { MongoClient } from 'mongodb';
 
 // ===========================
 // KONFIGURATION
 // ===========================
 
 const CONFIG = {
+  // Database
+  cleanDatabase: true,  // ⚠️ ACHTUNG: Löscht ALLE existierenden Chunks und Dynamic Data!
+  
   // World Settings
   worldSeed: 123456,  // Ändere für andere Welten
   
   // Generation Area (in Chunks)
-  minChunkX: -10,     // Generiere von  -10 bis +10 = 21 Chunks
-  maxChunkX: 10,
-  minChunkY: -10,
-  maxChunkY: 10,
+  minChunkX: -20,     // Generiere von  -10 bis +10 = 21 Chunks
+  maxChunkX: 20,
+  minChunkY: -20,
+  maxChunkY: 20,
   
   // Chunk Size
-  chunkSize: 32,      // 32x32 Hexagone pro Chunk (für MongoDB)
-  superChunkSize: 10,  // Generiere in 10x10 Chunk-Blöcken = 320x320 tiles auf einmal!
+  chunkSize: 16,      // 16x16 Hexagone pro Chunk (kleinere Dokumente für bessere Granularität)
+  superChunkSize: 50,  // Generiere in 50x50 Chunk-Blöcken = 800x800 tiles auf einmal!
   
   // Noise Parameters - Balance zwischen Kontinenten und Variation
   continentScale1: 0.003,  // Sehr große Kontinente
@@ -161,6 +165,26 @@ async function generateWorld() {
   // MongoDB verbinden
   const chunkManager = new ChunkManager();
   await chunkManager.connect();
+  
+  // ===========================
+  // CLEANUP (Optional)
+  // ===========================
+  if (CONFIG.cleanDatabase) {
+    console.log('🧹 Cleaning database...');
+    const mongoUrl = 'mongodb://localhost:27017';
+    const client = new MongoClient(mongoUrl);
+    await client.connect();
+    const db = client.db('hex-kingdom');
+    
+    const chunksDeleted = await db.collection('chunks').deleteMany({});
+    const dynamicDeleted = await db.collection('tile_dynamic_data').deleteMany({});
+    
+    console.log(`   ✅ Deleted ${chunksDeleted.deletedCount} chunks`);
+    console.log(`   ✅ Deleted ${dynamicDeleted.deletedCount} dynamic tile data`);
+    console.log('');
+    
+    await client.close();
+  }
   
   let totalChunks = 0;
   let totalTiles = 0;

@@ -80,6 +80,63 @@
   font-size: 14px;
 }
 
+.dev-quicklogin {
+  margin-top: 8px;
+  padding: 16px;
+  background: rgba(255, 165, 0, 0.1);
+  border: 1px dashed #ffa500;
+  border-radius: 8px;
+}
+
+.dev-label {
+  color: #ffa500;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 12px 0;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.dev-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.quick-btn {
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.quick-btn.admin {
+  background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+  color: white;
+}
+
+.quick-btn.admin:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4);
+}
+
+.quick-btn.user {
+  background: linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%);
+  color: white;
+}
+
+.quick-btn.user:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(149, 165, 166, 0.4);
+}
+
+.quick-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .features {
   background: rgba(26, 26, 46, 0.5);
   border-radius: 12px;

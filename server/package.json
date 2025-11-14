@@ -7,7 +7,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "generate-world": "tsx src/scripts/generateWorld.ts"
+    "generate-world": "tsx src/scripts/generateWorld.ts",
+    "db-stats": "tsx src/scripts/dbStats.ts"
   },
   "dependencies": {
     "@colyseus/core": "^0.15.0",

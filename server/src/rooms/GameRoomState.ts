@@ -1,4 +1,4 @@
-import { Schema, MapSchema, type } from '@colyseus/schema';
+import { Schema, MapSchema, type, filter } from '@colyseus/schema';
 import {
   HexCoord,
   ResourceType,

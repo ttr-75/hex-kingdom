@@ -36,6 +36,8 @@ export class HexRenderer {
   
   private tiles: Map<string, PIXI.Graphics> = new Map();
   private buildings: Map<string, PIXI.Graphics> = new Map();
+  private dragonMarkers: Map<string, PIXI.Container> = new Map();
+  private territoryBorders: Map<string, PIXI.Graphics> = new Map(); // Territoriums-Grenzen
   
   private camera = { x: 0, y: 0, zoom: 1 };
   private isDragging = false;
@@ -43,6 +45,10 @@ export class HexRenderer {
   
   private isReady = false;
   private isDestroyed = false;
+  
+  // Queue für Tiles die ankommen bevor der Renderer bereit ist
+  private pendingTiles: Map<string, HexTileState> | null = null;
+  private pendingSpawnPosition: HexCoord | null = null;
   
   private onTileClick?: (coord: HexCoord) => void;
   private onViewportChange?: (visibleChunks: Array<{ chunkX: number; chunkY: number }>) => void;
@@ -90,6 +96,22 @@ export class HexRenderer {
     
     this.setupInteraction();
     this.isReady = true;
+    console.log('✅ PixiJS Renderer ready!');
+    
+    // Verarbeite pending Tiles
+    if (this.pendingTiles) {
+      console.log(`🔄 Processing ${this.pendingTiles.size} pending tiles`);
+      this.updateMap(this.pendingTiles);
+      this.pendingTiles = null;
+    }
+    
+    // Verarbeite pending spawn position
+    if (this.pendingSpawnPosition) {
+      console.log('🎯 Processing pending spawn position:', this.pendingSpawnPosition);
+      this.focusOn(this.pendingSpawnPosition);
+      this.pendingSpawnPosition = null;
+    }
+    
     this.updateTransform();
     
     // Window resize handling
@@ -135,7 +157,26 @@ export class HexRenderer {
       const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
       const newZoom = Math.max(0.3, Math.min(2, this.camera.zoom * zoomFactor));
       
+      // Zoom zur Mausposition
+      const mouseX = e.clientX;
+      const mouseY = e.clientY;
+      
+      // Welt-Position vor dem Zoom
+      const worldPosBefore = this.screenToWorld(mouseX, mouseY);
+      
+      // Zoom anwenden
       this.camera.zoom = newZoom;
+      
+      // Welt-Position nach dem Zoom
+      const worldPosAfter = {
+        x: (mouseX - this.camera.x) / this.camera.zoom,
+        y: (mouseY - this.camera.y) / this.camera.zoom
+      };
+      
+      // Kamera anpassen, damit die Welt-Position unter der Maus gleich bleibt
+      this.camera.x += (worldPosAfter.x - worldPosBefore.x) * this.camera.zoom;
+      this.camera.y += (worldPosAfter.y - worldPosBefore.y) * this.camera.zoom;
+      
       this.updateTransform();
     });
     
@@ -181,7 +222,7 @@ export class HexRenderer {
   }
   
   private getVisibleChunks(): Array<{ chunkX: number; chunkY: number }> {
-    const CHUNK_SIZE = 32;
+    const CHUNK_SIZE = 16;
     const padding = 2; // Reduziert auf 2 Chunks Padding
     
     // Berechne sichtbaren Bereich in Welt-Koordinaten
@@ -249,7 +290,13 @@ export class HexRenderer {
   
   // Update map with tile data - nur neue Tiles hinzufügen
   updateMap(tiles: Map<string, HexTileState>) {
-    if (!this.isReady || !this.mapContainer) return;
+    if (!this.isReady || !this.mapContainer) {
+      console.warn('⚠️ Renderer not ready for updateMap, storing tiles in queue', { isReady: this.isReady, hasMapContainer: !!this.mapContainer, tileCount: tiles.size });
+      this.pendingTiles = tiles;
+      return;
+    }
+    
+    console.log(`🔄 updateMap called with ${tiles.size} tiles, current rendered: ${this.tiles.size}`);
     
     let newTileCount = 0;
     
@@ -269,14 +316,6 @@ export class HexRenderer {
       
       this.drawHexagon(graphics, pixel.x, pixel.y, color, shadowColor);
       
-      // Owner highlight
-      if (tile.owner) {
-        const outline = new PIXI.Graphics();
-        outline.circle(pixel.x, pixel.y, HEX_SIZE * 0.8);
-        outline.stroke({ width: 3, color: 0xFFFFFF, alpha: 0.5 });
-        this.mapContainer.addChild(outline);
-      }
-      
       // Resource node indicator
       if (tile.resourceType) {
         const resourceColor = RESOURCE_COLORS[tile.resourceType] || 0xFFFFFF;
@@ -288,15 +327,113 @@ export class HexRenderer {
     });
     
     if (newTileCount > 0) {
-      console.log(`✨ Added ${newTileCount} new tiles (total: ${this.tiles.size})`);
+      console.log(`✨ Rendered ${newTileCount} new tiles (total: ${this.tiles.size})`);
+      
+      // Zeichne Territoriums-Grenzen
+      this.drawTerritoryBorders(tiles);
     }
     
     // Culling: Entferne weit entfernte Chunks
     this.cullDistantChunks();
   }
   
+  // Zeichne Territoriums-Grenzen um owned Tiles
+  private drawTerritoryBorders(tiles: Map<string, HexTileState>) {
+    // Lösche alte Borders
+    this.territoryBorders.forEach(border => border.destroy());
+    this.territoryBorders.clear();
+    
+    // Gruppiere Tiles nach Owner
+    const ownerTiles = new Map<string, Array<{ q: number; r: number }>>();
+    tiles.forEach(tile => {
+      if (tile.owner) {
+        if (!ownerTiles.has(tile.owner)) {
+          ownerTiles.set(tile.owner, []);
+        }
+        ownerTiles.get(tile.owner)!.push({ q: tile.q, r: tile.r });
+      }
+    });
+    
+    // Für jeden Owner: Zeichne Border
+    ownerTiles.forEach((ownedTiles, owner) => {
+      const borderGraphics = new PIXI.Graphics();
+      this.mapContainer.addChild(borderGraphics);
+      this.territoryBorders.set(owner, borderGraphics);
+      
+      const borderColor = 0xFFFFFF;
+      const borderWidth = 4;
+      
+      const tileSet = new Set(ownedTiles.map(t => `${t.q},${t.r}`));
+      
+      // Sammle alle Außenkanten als Segmente
+      const edgeSegments: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+      
+      ownedTiles.forEach(tile => {
+        const pixel = hexToPixel(tile, HEX_SIZE);
+        
+        // 6 Nachbarn in axial coordinates für flat-top
+        // Visualisierung:       N
+        //                  NW      NE
+        //                    (0,0)
+        //                  SW      SE
+        //                       S
+        const neighbors = [
+          { q: tile.q, r: tile.r - 1 },     // Nord (oben)
+          { q: tile.q + 1, r: tile.r - 1 }, // Nordost
+          { q: tile.q + 1, r: tile.r },     // Südost
+          { q: tile.q, r: tile.r + 1 },     // Süd (unten)
+          { q: tile.q - 1, r: tile.r + 1 }, // Südwest
+          { q: tile.q - 1, r: tile.r }      // Nordwest
+        ];
+        
+        // Hex-Ecken (flat-top: 0°=rechts, dann gegen Uhrzeigersinn)
+        // Ecke 0: 0° (rechts-unten), Ecke 1: 60° (rechts-oben), Ecke 2: 120° (oben-links), 
+        // Ecke 3: 180° (links-oben), Ecke 4: 240° (links-unten), Ecke 5: 300° (unten-rechts)
+        const corners = [0, 60, 120, 180, 240, 300].map(angle => {
+          const rad = (angle * Math.PI) / 180;
+          return {
+            x: pixel.x + HEX_SIZE * Math.cos(rad),
+            y: pixel.y + HEX_SIZE * Math.sin(rad)
+          };
+        });
+        
+        // Zuordnung Kante -> Nachbar für flat-top:
+        // Kante 0->1 (rechts, vertikal) -> Nachbar NE (Nordost)
+        // Kante 1->2 (oben-rechts) -> Nachbar N (Nord)
+        // Kante 2->3 (oben-links) -> Nachbar NW (Nordwest)
+        // Kante 3->4 (links, vertikal) -> Nachbar SW (Südwest)
+        // Kante 4->5 (unten-links) -> Nachbar S (Süd)
+        // Kante 5->0 (unten-rechts) -> Nachbar SE (Südost)
+        
+        //const edgeToNeighborIndex = [1, 0, 5, 4, 3, 2]; // Kante i->i+1 gehört zu Nachbar[index]
+
+        const edgeToNeighborIndex = [2, 3, 4, 5, 0, 1]; // Kante i->i+1 gehört zu Nachbar[index]
+        
+        for (let i = 0; i < 6; i++) {
+          const neighborIdx = edgeToNeighborIndex[i];
+          const neighbor = neighbors[neighborIdx];
+          const hasNeighbor = tileSet.has(`${neighbor.q},${neighbor.r}`);
+          
+          if (!hasNeighbor) {
+            const c1 = corners[i];
+            const c2 = corners[(i + 1) % 6];
+            edgeSegments.push({ x1: c1.x, y1: c1.y, x2: c2.x, y2: c2.y });
+          }
+        }
+      });
+      
+      // Zeichne alle Segmente
+      edgeSegments.forEach(seg => {
+        borderGraphics.moveTo(seg.x1, seg.y1);
+        borderGraphics.lineTo(seg.x2, seg.y2);
+      });
+      
+      borderGraphics.stroke({ width: borderWidth, color: borderColor, alpha: 0.8 });
+    });
+  }
+  
   private cullDistantChunks() {
-    const CHUNK_SIZE = 32;
+    const CHUNK_SIZE = 16;
     const visibleChunks = this.getVisibleChunks();
     
     // Erstelle Set der sichtbaren Chunks (mit cullingRange Puffer)
@@ -394,11 +531,72 @@ export class HexRenderer {
   
   // Focus on specific hex
   focusOn(coord: HexCoord) {
-    if (!this.isReady) return;
+    if (!this.isReady) {
+      console.warn('⚠️ Renderer not ready for focusOn, storing spawn position');
+      this.pendingSpawnPosition = coord;
+      return;
+    }
+    console.log(`🎯 Focusing camera on hex (${coord.q}, ${coord.r})`);
     const pixel = hexToPixel(coord, HEX_SIZE);
     this.camera.x = window.innerWidth / 2 - pixel.x * this.camera.zoom;
     this.camera.y = window.innerHeight / 2 - pixel.y * this.camera.zoom;
+    console.log(`📷 Camera position: x=${this.camera.x.toFixed(0)}, y=${this.camera.y.toFixed(0)}, zoom=${this.camera.zoom}`);
     this.updateTransform();
+  }
+  
+  // Set missing chunks (draw "Here be dragons")
+  setMissingChunks(chunks: Array<{ chunkX: number; chunkY: number }>) {
+    if (!this.isReady || !this.mapContainer) return;
+    
+    // Clear old markers
+    this.dragonMarkers.forEach(marker => marker.destroy());
+    this.dragonMarkers.clear();
+    
+    // Draw new markers
+    chunks.forEach(chunk => {
+      const chunkKey = `${chunk.chunkX}_${chunk.chunkY}`;
+      const CHUNK_SIZE = 16;
+      
+      // Berechne Chunk-Mitte in Pixel-Koordinaten
+      const centerQ = chunk.chunkX * CHUNK_SIZE + CHUNK_SIZE / 2;
+      const centerR = chunk.chunkY * CHUNK_SIZE + CHUNK_SIZE / 2;
+      const pixel = hexToPixel({ q: centerQ, r: centerR }, HEX_SIZE);
+      
+      // Container für Marker
+      const container = new PIXI.Container();
+      
+      // Dunkler Hintergrund für Chunk
+      const background = new PIXI.Graphics();
+      const chunkWidth = CHUNK_SIZE * HEX_SIZE * 1.5;
+      const chunkHeight = CHUNK_SIZE * HEX_SIZE * Math.sqrt(3);
+      background.rect(
+        pixel.x - chunkWidth / 2,
+        pixel.y - chunkHeight / 2,
+        chunkWidth,
+        chunkHeight
+      );
+      background.fill({ color: 0x1a1a1a, alpha: 0.8 });
+      container.addChild(background);
+      
+      // "Here be dragons" Text
+      const text = new PIXI.Text({
+        text: '🐉\nHere be\nDragons',
+        style: {
+          fontSize: 32,
+          fill: 0xff6b6b,
+          align: 'center',
+          fontFamily: 'Arial',
+          fontWeight: 'bold',
+          stroke: { color: 0x000000, width: 4 }
+        }
+      });
+      text.anchor.set(0.5);
+      text.position.set(pixel.x, pixel.y);
+      container.addChild(text);
+      
+      this.mapContainer.addChild(container);
+      this.dragonMarkers.set(chunkKey, container);
+    });
   }
   
   destroy() {
@@ -413,8 +611,10 @@ export class HexRenderer {
     try {
       this.tiles.forEach(g => { try { g.destroy(); } catch {} });
       this.buildings.forEach(g => { try { g.destroy(); } catch {} });
+      this.dragonMarkers.forEach(m => { try { m.destroy(); } catch {} });
       this.tiles.clear();
       this.buildings.clear();
+      this.dragonMarkers.clear();
     } catch {}
   }
 }

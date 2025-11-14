@@ -19,29 +19,40 @@ import {
   hexToKey
 } from '@hex-kingdom/shared';
 import { ChunkManager } from '../database/ChunkManager.js';
+import { TileDataManager } from '../database/TileDataManager.js';
 
 const PLAYER_COLORS = [
   '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
   '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2'
 ];
 
+// Spieler-Konfiguration
+const PLAYER_CONFIG = {
+  admin: {
+    startingTilesRadius: 1,      // 7 Tiles um Spawn
+    visionRadius: Infinity,      // Sieht alles
+    canRequestAllChunks: true    // Keine Einschränkung
+  },
+  user: {
+    startingTilesRadius: 2,      // 19 Tiles um Spawn (konfigurierbar)
+    visionRadius: 2,             // Sieht nur +2 Tiles um eigenes Territorium
+    canRequestAllChunks: false   // Nur sichtbare Chunks
+  }
+};
+
 export class GameRoom extends Room<GameRoomState> {
   maxClients = 10;
   private lastUpdate = Date.now();
   private chunkManager!: ChunkManager; // Definitiv zugewiesen in onCreate
-  private worldSeed!: number; // Definitiv zugewiesen in onCreate
+  private tileDataManager!: TileDataManager; // Für dynamische Tile-Daten
 
-  onCreate(_options: any) {
+  async onCreate(_options: any) {
     this.setState(new GameRoomState());
     this.state.tickRate = 10; // 10 Updates pro Sekunde
     
-    // World Seed für konsistente Generierung
-    this.worldSeed = _options.seed || Math.floor(Math.random() * 1000000);
-    console.log(`🌍 World Seed: ${this.worldSeed}`);
-    
     // MongoDB ChunkManager initialisieren
     this.chunkManager = new ChunkManager();
-    this.initializeWorld();
+    await this.initializeWorld();
     
     // Game Loop
     this.setSimulationInterval(() => this.update(), 1000 / this.state.tickRate);
@@ -71,11 +82,15 @@ export class GameRoom extends Room<GameRoomState> {
     console.log(`✅ GameRoom ${this.roomId} erstellt`);
   }
 
-  onJoin(client: Client, options: any) {
+  async onJoin(client: Client, options: any) {
     const player = new PlayerState();
     player.id = client.sessionId;
     player.username = options.username || `Player_${client.sessionId.slice(0, 6)}`;
     player.color = PLAYER_COLORS[this.state.players.size % PLAYER_COLORS.length];
+    
+    // Bestimme Spieler-Typ (admin oder user)
+    const isAdmin = options.username === 'admin';
+    (player as any).isAdmin = isAdmin; // Temporär, wird nicht synchronisiert
     
     // Startressourcen
     player.wood = STARTING_RESOURCES.wood;
@@ -93,10 +108,126 @@ export class GameRoom extends Room<GameRoomState> {
     
     this.state.players.set(client.sessionId, player);
     
-    // Gebe dem Spieler ein Startgebiet (einfache Implementierung)
-    this.assignStartingTerritory(client.sessionId);
+    console.log(`👤 ${player.username} beigetreten (${client.sessionId}) [${isAdmin ? 'Admin' : 'User'}]`);
     
-    console.log(`👤 ${player.username} beigetreten (${client.sessionId})`);
+    // Prüfe ob Spieler bereits Territorium hat (aus DB laden)
+    let hasTerritory = false;
+    try {
+      const existingTiles = await this.tileDataManager.getPlayerTiles(client.sessionId);
+      hasTerritory = existingTiles.length > 0;
+      
+      if (hasTerritory) {
+        console.log(`🏠 Spieler hat bereits ${existingTiles.length} Tiles`);
+        
+        // Setze Owner im RAM für bereits existierende Tiles
+        existingTiles.forEach(({ q, r }) => {
+          const key = hexToKey({ q, r });
+          const tile = this.state.tiles.get(key);
+          if (tile) {
+            tile.owner = client.sessionId;
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Fehler beim Laden des Spieler-Territoriums:', error);
+    }
+    
+    // Wenn kein Territorium: Weise neues zu
+    let spawnPosition = { q: 0, r: 0 };
+    if (!hasTerritory) {
+      spawnPosition = await this.assignStartingTerritory(client.sessionId, isAdmin);
+    } else {
+      // Berechne Zentrum des existierenden Territoriums
+      const tiles = await this.tileDataManager.getPlayerTiles(client.sessionId);
+      if (tiles.length > 0) {
+        const avgQ = tiles.reduce((sum, t) => sum + t.q, 0) / tiles.length;
+        const avgR = tiles.reduce((sum, t) => sum + t.r, 0) / tiles.length;
+        spawnPosition = { q: Math.round(avgQ), r: Math.round(avgR) };
+      }
+    }
+    
+    // Sende Spawn-Position an Client für Kamera-Zentrierung
+    console.log(`📍 Sende Spawn-Position an ${player.username}:`, spawnPosition);
+    client.send('setSpawnPosition', spawnPosition);
+    
+    // Debug: Zeige wie viele Tiles der Spieler nach join sehen kann
+    console.log(`👁️ Total tiles in state: ${this.state.tiles.size}`);
+    
+    // Debug: Zähle owned tiles
+    let ownedCount = 0;
+    this.state.tiles.forEach(tile => {
+      if (tile.owner === client.sessionId) ownedCount++;
+    });
+    console.log(`🏠 Player owns ${ownedCount} tiles immediately after join`);
+    
+    // Sende initiale sichtbare Tiles an Client (Fog-of-War)
+    this.sendVisibleTilesToClient(client.sessionId, isAdmin);
+  }
+  
+  // Sende nur sichtbare Tiles an einen spezifischen Client
+  private sendVisibleTilesToClient(clientId: string, isAdmin: boolean) {
+    const VISION_RADIUS = 2;
+    const visibleTiles: Array<any> = [];
+    
+    if (isAdmin) {
+      // Admin sieht alles
+      this.state.tiles.forEach((tile, key) => {
+        visibleTiles.push({
+          key,
+          q: tile.q,
+          r: tile.r,
+          terrain: tile.terrain,
+          owner: tile.owner,
+          resourceType: tile.resourceType,
+          resourceAmount: tile.resourceAmount
+        });
+      });
+    } else {
+      // User: Sammle owned tiles
+      const ownedTiles: Array<{ q: number; r: number }> = [];
+      this.state.tiles.forEach(tile => {
+        if (tile.owner === clientId) {
+          ownedTiles.push({ q: tile.q, r: tile.r });
+        }
+      });
+      
+      // Berechne sichtbare Tiles
+      const visibleKeys = new Set<string>();
+      ownedTiles.forEach(owned => {
+        this.state.tiles.forEach((tile, key) => {
+          const dq = tile.q - owned.q;
+          const dr = tile.r - owned.r;
+          const distance = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+          
+          if (distance <= VISION_RADIUS) {
+            visibleKeys.add(key);
+          }
+        });
+      });
+      
+      // Sammle sichtbare Tiles
+      visibleKeys.forEach(key => {
+        const tile = this.state.tiles.get(key);
+        if (tile) {
+          visibleTiles.push({
+            key,
+            q: tile.q,
+            r: tile.r,
+            terrain: tile.terrain,
+            owner: tile.owner,
+            resourceType: tile.resourceType,
+            resourceAmount: tile.resourceAmount
+          });
+        }
+      });
+    }
+    
+    console.log(`📤 Sending ${visibleTiles.length} visible tiles to client ${clientId}`);
+    
+    const client = this.clients.find(c => c.sessionId === clientId);
+    if (client) {
+      client.send('visibleTiles', { tiles: visibleTiles });
+    }
   }
 
   onLeave(client: Client, _consented: boolean) {
@@ -277,8 +408,16 @@ export class GameRoom extends Room<GameRoomState> {
     // Markiere Feld als besetzt
     const tile = this.state.tiles.get(tileKey);
     if (tile) {
-      tile.owner = client.sessionId;
+      tile.owner = client.sessionId; // Update RAM
     }
+    
+    // Async: Update DB (fire & forget)
+    Promise.all([
+      this.tileDataManager.setTileOwner(command.position.q, command.position.r, client.sessionId),
+      this.tileDataManager.setTileBuilding(command.position.q, command.position.r, building.id)
+    ]).catch(err => {
+      console.error('Failed to save tile building data:', err);
+    });
   }
 
   private handleResearch(client: Client, command: ResearchCommand) {
@@ -408,209 +547,58 @@ export class GameRoom extends Room<GameRoomState> {
       // Verbinde zu MongoDB
       await this.chunkManager.connect();
       console.log('✅ ChunkManager connected');
+      
+      // Verbinde TileDataManager
+      this.tileDataManager = new TileDataManager();
+      await this.tileDataManager.connect();
     } catch (error) {
-      console.warn('⚠️ MongoDB nicht verfügbar, verwende In-Memory-Generierung:', error);
+      console.error('❌ MongoDB nicht verfügbar:', error);
+      throw new Error('MongoDB connection required for game operation');
     }
     
-    // Generiere initiale Chunks um Spawn-Punkt (0,0)
-    await this.generateInitialChunksAsync();
+    // Lade initiale Chunks um Spawn-Punkt (0,0) aus DB
+    await this.loadInitialChunksAsync();
   }
   
-  // Generiere initiale Chunks (3x3 um Spawn) - async Version
-  private async generateInitialChunksAsync() {
-    const CHUNK_SIZE = 32;
+  // Lade initiale Chunks (3x3 um Spawn) aus DB
+  private async loadInitialChunksAsync() {
+    const CHUNK_SIZE = 16;
     const promises: Promise<void>[] = [];
     
     for (let cx = -1; cx <= 1; cx++) {
       for (let cy = -1; cy <= 1; cy++) {
-        promises.push(this.generateChunkAsync(cx, cy, CHUNK_SIZE));
+        promises.push(this.loadChunkAsync(cx, cy, CHUNK_SIZE));
       }
     }
     
     await Promise.all(promises);
-    console.log(`🗺️ ${this.state.tiles.size} initiale Tiles generiert (Seed: ${this.worldSeed})`);
+    console.log(`🗺️ ${this.state.tiles.size} initiale Tiles aus DB geladen`);
   }
   
-  // Generiere einen einzelnen Chunk - ASYNC mit MongoDB
-  private async generateChunkAsync(chunkX: number, chunkY: number, CHUNK_SIZE: number): Promise<void> {
-    // Prüfe erst, ob Chunk in MongoDB existiert
+  // Lade einen einzelnen Chunk aus MongoDB (KEIN Generieren!)
+  private async loadChunkAsync(chunkX: number, chunkY: number, _CHUNK_SIZE: number): Promise<void> {
     try {
       const existingChunk = await this.chunkManager.loadChunk(chunkX, chunkY);
       
-      if (existingChunk) {
+      if (existingChunk && existingChunk.tiles.length > 0) {
         // Chunk aus DB laden
         const tiles = this.chunkManager.chunkDataToTiles([existingChunk]);
         tiles.forEach((tile, key) => {
           this.state.tiles.set(key, tile);
         });
         return;
+      } else {
+        // Chunk existiert nicht in DB - logge Warnung
+        console.warn(`🐉 Chunk (${chunkX}, ${chunkY}) nicht in DB gefunden - "Here be dragons"`);
       }
     } catch (error) {
-      // MongoDB nicht verfügbar, generiere neu
-    }
-    
-    // Chunk existiert nicht, generiere ihn
-    this.generateChunk(chunkX, chunkY, CHUNK_SIZE);
-    
-    // Speichere generierten Chunk in MongoDB
-    try {
-      const chunkTiles = new Map<string, HexTileState>();
-      const startQ = chunkX * CHUNK_SIZE;
-      const startR = chunkY * CHUNK_SIZE;
-      
-      for (let localQ = 0; localQ < CHUNK_SIZE; localQ++) {
-        for (let localR = 0; localR < CHUNK_SIZE; localR++) {
-          const q = startQ + localQ;
-          const r = startR + localR;
-          const key = hexToKey({ q, r });
-          const tile = this.state.tiles.get(key);
-          if (tile) {
-            chunkTiles.set(key, tile);
-          }
-        }
-      }
-      
-      const chunkData = this.chunkManager.tilesToChunkData(chunkTiles);
-      const chunkArray = Array.from(chunkData.values());
-      
-      if (chunkArray.length > 0) {
-        await this.chunkManager.saveChunk(chunkArray[0]);
-      }
-    } catch (error) {
-      // MongoDB write failed, ignore
+      console.error(`❌ MongoDB-Fehler beim Laden von Chunk (${chunkX}, ${chunkY}):`, error);
     }
   }
   
-  // Generiere einen einzelnen Chunk - SYNC Version
-  private generateChunk(chunkX: number, chunkY: number, CHUNK_SIZE: number) {
-    const startQ = chunkX * CHUNK_SIZE;
-    const startR = chunkY * CHUNK_SIZE;
+  private async assignStartingTerritory(playerId: string, isAdmin: boolean = false): Promise<{ q: number; r: number }> {
+    const config = isAdmin ? PLAYER_CONFIG.admin : PLAYER_CONFIG.user;
     
-    for (let localQ = 0; localQ < CHUNK_SIZE; localQ++) {
-      for (let localR = 0; localR < CHUNK_SIZE; localR++) {
-        const q = startQ + localQ;
-        const r = startR + localR;
-        
-        const key = hexToKey({ q, r });
-        
-        // Überspringe, wenn Tile bereits existiert
-        if (this.state.tiles.has(key)) continue;
-        
-        const tile = new HexTileState();
-        tile.q = q;
-        tile.r = r;
-        
-        // Verwende separaten Noise für Wasser/Land und Terrain-Variation
-        tile.terrain = this.getTerrainFromNoiseInfinite(q, r);
-        
-        // Ressourcen
-        if (this.shouldHaveResource(tile.terrain)) {
-          tile.resourceType = this.getResourceForTerrain(tile.terrain);
-          tile.resourceAmount = Math.floor(Math.random() * 500) + 500;
-        }
-        
-        this.state.tiles.set(key, tile);
-      }
-    }
-  }
-  
-  // Noise für große Wasser/Land-Trennung
-  private continentNoise(q: number, r: number): number {
-    const scale1 = 0.003;  // SEHR große Kontinente (3x größer)
-    const scale2 = 0.001; // Mega-große Regionen (10x größer)
-    
-    const seedOffset = this.worldSeed * 0.001;
-    
-    const noise1 = Math.sin((q + seedOffset) * scale1) * Math.cos((r + seedOffset) * scale1);
-    const noise2 = Math.sin((q + seedOffset) * scale2 + 100) * Math.cos((r + seedOffset) * scale2 + 100);
-    
-    return (noise1 * 0.7 + noise2 * 0.3);
-  }
-  
-  // Noise für Terrain-Variation (größere Gebiete gegen Musterung)
-  private terrainNoise(q: number, r: number): number {
-    const scale1 = 0.02;  // Große Features (4x größer)
-    const scale2 = 0.05;  // Mittlere Details (3x größer)
-    const scale3 = 0.1;   // Feine Variation (2.5x größer)
-    
-    const seedOffset = this.worldSeed * 0.001;
-    
-    const noise1 = Math.sin((q + seedOffset + 300) * scale1) * Math.cos((r + seedOffset + 300) * scale1);
-    const noise2 = Math.sin((q + seedOffset + 400) * scale2) * Math.cos((r + seedOffset + 400) * scale2);
-    const noise3 = Math.sin((q + seedOffset + 500) * scale3) * Math.cos((r + seedOffset + 500) * scale3);
-    
-    return (noise1 * 0.5 + noise2 * 0.3 + noise3 * 0.2);
-  }
-  
-  // Terrain für quasi-unendliche Map (drei-schichtige Generierung)
-  private getTerrainFromNoiseInfinite(q: number, r: number): string {
-    // Layer 1: Große Kontinente (Wasser vs Land)
-    const continentValue = this.continentNoise(q, r);
-    
-    // Leichte Bias zum Zentrum
-    const distance = Math.sqrt(q * q + r * r) / 100;
-    const centerBias = 1.0 - Math.min(distance * 0.3, 0.5);
-    
-    const adjustedContinent = continentValue + centerBias * 0.2;
-    
-    // Ist es Wasser?
-    if (adjustedContinent < -0.15) return 'water';
-    
-    // Layer 2: Höhen-Variation (Flachland vs Gebirge)
-    const elevationNoise = this.terrainNoise(q, r);
-    
-    // Layer 3: Feuchtigkeit/Vegetation (unabhängig von Höhe)
-    const moistureNoise = this.terrainNoise(q + 1000, r + 1000); // Offset für Unabhängigkeit
-    
-    // Kombiniere beide Layer für flexible Übergänge
-    // Höhe bestimmt: mountain/hills vs flach
-    // Feuchtigkeit bestimmt: forest/grass vs desert
-    
-    const isHighElevation = elevationNoise > 0.7;
-    const isMediumElevation = elevationNoise > 0.6 && elevationNoise <= 0.7;
-    const isWet = moistureNoise > 0;
-    
-    // Berge (immer hoch)
-    if (isHighElevation && elevationNoise > 0.5) return 'mountain';
-    
-    // Hügel (mittlere/hohe Höhe)
-    if (isHighElevation || isMediumElevation) {
-      // Hügel können an Wald ODER Gras grenzen
-      return 'hills';
-    }
-    
-    // Flachland: Vegetation abhängig von Feuchtigkeit
-    if (isWet) {
-      // Feuchte Gebiete -> Wald oder Gras
-      return moistureNoise > 0.3 ? 'forest' : 'grass';
-    } else {
-      // Trockene Gebiete -> Wüste oder Gras
-      return moistureNoise < -0.3 ? 'desert' : 'grass';
-    }
-  }
-  
-  // Ressourcen basierend auf Terrain
-  private shouldHaveResource(terrain: string): boolean {
-    const chances: Record<string, number> = {
-      forest: 0.25,
-      mountain: 0.30,
-      hills: 0.20,
-      grass: 0.10,
-      desert: 0.05,
-      water: 0
-    };
-    return Math.random() < (chances[terrain] || 0);
-  }
-  
-  private getResourceForTerrain(terrain: string): string {
-    if (terrain === 'forest') return Math.random() > 0.5 ? ResourceType.WOOD : ResourceType.WOOD;
-    if (terrain === 'mountain') return Math.random() > 0.5 ? ResourceType.STONE : ResourceType.IRON;
-    if (terrain === 'hills') return Math.random() > 0.7 ? ResourceType.GOLD : ResourceType.STONE;
-    if (terrain === 'desert') return ResourceType.GOLD;
-    return Math.random() > 0.5 ? ResourceType.WOOD : ResourceType.STONE;
-  }
-
-  private assignStartingTerritory(playerId: string) {
     // Einfache Implementierung: Gebe jedem Spieler ein paar Felder in der Nähe des Spawns
     const playerIndex = this.state.players.size - 1;
     const angle = (playerIndex * 2 * Math.PI) / 8; // Verteile bis zu 8 Spieler im Kreis
@@ -619,54 +607,186 @@ export class GameRoom extends Room<GameRoomState> {
     const spawnQ = Math.round(spawnDistance * Math.cos(angle));
     const spawnR = Math.round(spawnDistance * Math.sin(angle));
     
-    // Markiere 7 Hexfelder um den Spawn herum als Territorium
-    for (let dq = -1; dq <= 1; dq++) {
-      for (let dr = -1; dr <= 1; dr++) {
-        if (Math.abs(dq + dr) > 1) continue;
-        
-        const tileKey = hexToKey({ q: spawnQ + dq, r: spawnR + dr });
-        const tile = this.state.tiles.get(tileKey);
-        if (tile) {
-          tile.owner = playerId;
+    const tilesToOwn: Array<{ q: number; r: number }> = [];
+    
+    // Markiere Hexfelder basierend auf Radius
+    for (let dq = -config.startingTilesRadius; dq <= config.startingTilesRadius; dq++) {
+      for (let dr = -config.startingTilesRadius; dr <= config.startingTilesRadius; dr++) {
+        // Hex-Distance-Check (Manhattan-ähnlich)
+        const ds = -dq - dr;
+        if (Math.abs(dq) <= config.startingTilesRadius && 
+            Math.abs(dr) <= config.startingTilesRadius && 
+            Math.abs(ds) <= config.startingTilesRadius) {
+          
+          const q = spawnQ + dq;
+          const r = spawnR + dr;
+          const tileKey = hexToKey({ q, r });
+          const tile = this.state.tiles.get(tileKey);
+          
+          if (tile) {
+            tile.owner = playerId; // Update im RAM für sofortige Sichtbarkeit
+            tilesToOwn.push({ q, r });
+          }
         }
       }
     }
+    
+    console.log(`🏠 ${isAdmin ? 'Admin' : 'User'} erhält ${tilesToOwn.length} Tiles (Radius: ${config.startingTilesRadius})`);
+    console.log(`🎯 Spawn-Koordinaten: q=${spawnQ}, r=${spawnR}`);
+    
+    // Async: Speichere in DB (fire & forget)
+    if (tilesToOwn.length > 0) {
+      this.tileDataManager.batchSetOwner(tilesToOwn, playerId).catch(err => {
+        console.error('Failed to save tile ownership:', err);
+      });
+    }
+    
+    // Gebe Spawn-Position zurück
+    return { q: spawnQ, r: spawnR };
   }
   
-  // Chunk-Loading Handler - ASYNC mit MongoDB
-  private async handleRequestChunks(_client: Client, message: { chunkCoords: Array<{ chunkX: number; chunkY: number }> }) {
-    const CHUNK_SIZE = 32;
-    const MAX_CHUNKS_PER_REQUEST = 100; // Erhöht für große Viewports
+  // Chunk-Loading Handler - Lade NUR aus MongoDB + Fog-of-War für User
+  private async handleRequestChunks(client: Client, message: { chunkCoords: Array<{ chunkX: number; chunkY: number }> }) {
+    const CHUNK_SIZE = 16;
+    const MAX_CHUNKS_PER_REQUEST = 100;
+    
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    
+    const isAdmin = (player as any).isAdmin || false;
+    const config = isAdmin ? PLAYER_CONFIG.admin : PLAYER_CONFIG.user;
+    
+    // Für User: Filtere nur sichtbare Chunks
+    let allowedCoords = message.chunkCoords;
+    if (!config.canRequestAllChunks) {
+      allowedCoords = this.filterVisibleChunks(client.sessionId, message.chunkCoords, config.visionRadius);
+      
+      const filtered = message.chunkCoords.length - allowedCoords.length;
+      if (filtered > 0) {
+        console.log(`🔒 ${filtered} Chunks für User blockiert (Fog-of-War)`);
+      }
+    }
     
     // Limitiere Anzahl der Chunks
-    const limitedCoords = message.chunkCoords.slice(0, MAX_CHUNKS_PER_REQUEST);
+    const limitedCoords = allowedCoords.slice(0, MAX_CHUNKS_PER_REQUEST);
     
-    console.log(`📥 Chunk request: ${message.chunkCoords.length} chunks requested`);
-    
-    // Generiere Chunks parallel
-    const promises = limitedCoords.map(async (coord) => {
-      // Prüfe, ob dieser Chunk bereits Tiles enthält
-      const startQ = coord.chunkX * CHUNK_SIZE;
-      const startR = coord.chunkY * CHUNK_SIZE;
-      const key = hexToKey({ q: startQ, r: startR });
+    // Lade Chunks parallel
+    const results = await Promise.all(limitedCoords.map(async (coord) => {
+      // Prüfe, ob dieser Chunk bereits im RAM geladen ist
+      const chunkLoaded = this.isChunkLoaded(coord.chunkX, coord.chunkY, CHUNK_SIZE);
       
-      if (!this.state.tiles.has(key)) {
-        // Chunk existiert nicht -> generiere ihn (mit MongoDB-Check)
-        await this.generateChunkAsync(coord.chunkX, coord.chunkY, CHUNK_SIZE);
-        return true;
+      if (!chunkLoaded) {
+        // Chunk nicht im RAM -> versuche aus MongoDB zu laden
+        await this.loadChunkAsync(coord.chunkX, coord.chunkY, CHUNK_SIZE);
+        
+        // Prüfe ob Laden erfolgreich war
+        const nowLoaded = this.isChunkLoaded(coord.chunkX, coord.chunkY, CHUNK_SIZE);
+        return { coord, loaded: nowLoaded };
       }
-      return false;
+      return { coord, loaded: true };
+    }));
+    
+    // Finde fehlende Chunks
+    const missingChunks = results.filter(r => !r.loaded).map(r => r.coord);
+    
+    if (missingChunks.length > 0) {
+      // Sende Warnung an Client
+      client.send('missingChunks', { chunks: missingChunks });
+      console.warn(`🐉 ${missingChunks.length} Chunks fehlen in DB:`, missingChunks);
+    }
+    
+    const loadedCount = results.filter(r => r.loaded).length;
+    if (loadedCount > 0) {
+      console.log(`📦 ${loadedCount} Chunks geladen (${this.state.tiles.size} Tiles total)`);
+      
+      // Sende aktualisierte sichtbare Tiles an Client
+      this.sendVisibleTilesToClient(client.sessionId, isAdmin);
+    }
+  }
+  
+  // Filtere Chunks basierend auf Spieler-Sichtbarkeit (Fog-of-War)
+  private filterVisibleChunks(
+    playerId: string, 
+    requestedChunks: Array<{ chunkX: number; chunkY: number }>,
+    visionRadius: number
+  ): Array<{ chunkX: number; chunkY: number }> {
+    const CHUNK_SIZE = 16;
+    
+    // Sammle alle Tiles des Spielers
+    const playerTiles: Set<string> = new Set();
+    this.state.tiles.forEach((tile, key) => {
+      if (tile.owner === playerId) {
+        playerTiles.add(key);
+      }
     });
     
-    const results = await Promise.all(promises);
-    const newChunkCount = results.filter(r => r).length;
-    
-    if (newChunkCount > 0) {
-      console.log(`📦 ${newChunkCount} neue Chunks generiert (${this.state.tiles.size} Tiles total)`);
+    if (playerTiles.size === 0) {
+      return []; // Spieler hat keine Tiles -> keine Sicht
     }
     
-    if (message.chunkCoords.length > MAX_CHUNKS_PER_REQUEST) {
-      console.warn(`⚠️ Chunk request limited: ${message.chunkCoords.length} → ${MAX_CHUNKS_PER_REQUEST}`);
+    // Berechne sichtbare Tile-Bereiche (mit Vision-Radius)
+    const visibleChunks = new Set<string>();
+    
+    playerTiles.forEach(tileKey => {
+      const [qStr, rStr] = tileKey.split(',');
+      const q = parseInt(qStr);
+      const r = parseInt(rStr);
+      
+      // Für jedes Spieler-Tile: Berechne sichtbare Tiles im Radius
+      for (let dq = -visionRadius; dq <= visionRadius; dq++) {
+        for (let dr = -visionRadius; dr <= visionRadius; dr++) {
+          const ds = -dq - dr;
+          if (Math.abs(dq) <= visionRadius && 
+              Math.abs(dr) <= visionRadius && 
+              Math.abs(ds) <= visionRadius) {
+            
+            const visQ = q + dq;
+            const visR = r + dr;
+            
+            // Berechne Chunk für dieses sichtbare Tile
+            const chunkX = Math.floor(visQ / CHUNK_SIZE);
+            const chunkY = Math.floor(visR / CHUNK_SIZE);
+            visibleChunks.add(`${chunkX},${chunkY}`);
+          }
+        }
+      }
+    });
+    
+    // Filtere angeforderte Chunks
+    return requestedChunks.filter(coord => {
+      return visibleChunks.has(`${coord.chunkX},${coord.chunkY}`);
+    });
+  }
+  
+  // Prüfe ob ein Chunk vollständig im RAM geladen ist
+  private isChunkLoaded(chunkX: number, chunkY: number, _CHUNK_SIZE: number): boolean {
+    const CHUNK_SIZE = 16;
+    const startQ = chunkX * CHUNK_SIZE;
+    const startR = chunkY * CHUNK_SIZE;
+    
+    // Prüfe mehrere Tiles im Chunk (nicht nur das erste)
+    // Wenn Culling aktiv ist, könnten einzelne Tiles fehlen
+    let loadedCount = 0;
+    let sampleCount = 0;
+    
+    // Sample 4 Ecken + Mitte
+    const samplePositions = [
+      { dq: 0, dr: 0 },
+      { dq: CHUNK_SIZE - 1, dr: 0 },
+      { dq: 0, dr: CHUNK_SIZE - 1 },
+      { dq: CHUNK_SIZE - 1, dr: CHUNK_SIZE - 1 },
+      { dq: Math.floor(CHUNK_SIZE / 2), dr: Math.floor(CHUNK_SIZE / 2) }
+    ];
+    
+    for (const pos of samplePositions) {
+      const key = hexToKey({ q: startQ + pos.dq, r: startR + pos.dr });
+      if (this.state.tiles.has(key)) {
+        loadedCount++;
+      }
+      sampleCount++;
     }
+    
+    // Chunk gilt als geladen, wenn alle Samples vorhanden sind
+    return loadedCount === sampleCount;
   }
 }
