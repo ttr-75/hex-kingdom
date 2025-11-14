@@ -3,7 +3,6 @@ import {
   GameRoomState,
   PlayerState,
   BuildingState,
-  HexTileState,
   TradeOfferState
 } from './GameRoomState.js';
 import {
@@ -15,11 +14,11 @@ import {
   STARTING_RESOURCES,
   STARTING_STORAGE_CAPACITY,
   TECHNOLOGY_DEFINITIONS,
-  ResourceType,
   hexToKey
 } from '@hex-kingdom/shared';
 import { ChunkManager } from '../database/ChunkManager.js';
-import { TileDataManager } from '../database/TileDataManager.js';
+import { PostgresManager } from '../database/PostgresManager.js';
+import { RedisSessionManager } from '../database/RedisSessionManager.js';
 
 const PLAYER_COLORS = [
   '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
@@ -43,15 +42,24 @@ const PLAYER_CONFIG = {
 export class GameRoom extends Room<GameRoomState> {
   maxClients = 10;
   private lastUpdate = Date.now();
-  private chunkManager!: ChunkManager; // Definitiv zugewiesen in onCreate
-  private tileDataManager!: TileDataManager; // Für dynamische Tile-Daten
+  private chunkManager!: ChunkManager; // Für Terrain-Daten (MongoDB)
+  private postgres!: PostgresManager; // Für Players, Buildings, TileOwnership (PostgreSQL)
+  private redis!: RedisSessionManager; // Für Live-Session-Daten (Redis - führend!)
 
   async onCreate(_options: any) {
     this.setState(new GameRoomState());
     this.state.tickRate = 10; // 10 Updates pro Sekunde
     
-    // MongoDB ChunkManager initialisieren
+    // Initialize Databases
     this.chunkManager = new ChunkManager();
+    this.postgres = new PostgresManager();
+    this.redis = new RedisSessionManager();
+    
+    await this.chunkManager.connect();
+    await this.postgres.connect();
+    await this.redis.connect();
+    
+    // Load initial world data from MongoDB
     await this.initializeWorld();
     
     // Game Loop
@@ -84,49 +92,146 @@ export class GameRoom extends Room<GameRoomState> {
 
   async onJoin(client: Client, options: any) {
     const player = new PlayerState();
-    player.id = client.sessionId;
-    player.username = options.username || `Player_${client.sessionId.slice(0, 6)}`;
+    
+    // Verwende username als persistente ID statt sessionId
+    const persistentId = options.username || `Player_${client.sessionId.slice(0, 6)}`;
+    
+    player.id = client.sessionId; // Colyseus sessionId für aktuelle Verbindung
+    player.username = persistentId; // Username als persistente ID
     player.color = PLAYER_COLORS[this.state.players.size % PLAYER_COLORS.length];
     
     // Bestimme Spieler-Typ (admin oder user)
     const isAdmin = options.username === 'admin';
     (player as any).isAdmin = isAdmin; // Temporär, wird nicht synchronisiert
     
-    // Startressourcen
-    player.wood = STARTING_RESOURCES.wood;
-    player.stone = STARTING_RESOURCES.stone;
-    player.iron = STARTING_RESOURCES.iron;
-    player.gold = STARTING_RESOURCES.gold;
-    player.food = STARTING_RESOURCES.food;
+    // Lade Spieler: Redis → PostgreSQL → Neu erstellen
+    const redisSession = await this.redis.getPlayerSession(persistentId);
     
-    // Lagerkapazität
-    player.storageWood = STARTING_STORAGE_CAPACITY.wood;
-    player.storageStone = STARTING_STORAGE_CAPACITY.stone;
-    player.storageIron = STARTING_STORAGE_CAPACITY.iron;
-    player.storageGold = STARTING_STORAGE_CAPACITY.gold;
-    player.storageFood = STARTING_STORAGE_CAPACITY.food;
+    if (redisSession) {
+      // Reconnect - lade von Redis (führende DB während Session)
+      console.log(`🔄 ${persistentId} reconnect - lade von Redis`);
+      player.wood = redisSession.wood;
+      player.stone = redisSession.stone;
+      player.iron = redisSession.iron;
+      player.gold = redisSession.gold;
+      player.food = redisSession.food;
+      player.storageWood = redisSession.storageWood;
+      player.storageStone = redisSession.storageStone;
+      player.storageIron = redisSession.storageIron;
+      player.storageGold = redisSession.storageGold;
+      player.storageFood = redisSession.storageFood;
+      player.currentResearch = redisSession.currentResearch || '';
+      
+      // Extend Session TTL
+      await this.redis.keepPlayerSessionAlive(persistentId);
+    } else {
+      const existingPlayer = await this.postgres.getPlayer(persistentId);
+      
+      if (existingPlayer) {
+        // Returning Player - lade von PostgreSQL
+        console.log(`👤 ${persistentId} returning player - lade von PostgreSQL`);
+        player.color = existingPlayer.color;
+        
+        // Startressourcen für returning player (TODO: später aus separater Resources-Tabelle)
+        player.wood = STARTING_RESOURCES.wood;
+        player.stone = STARTING_RESOURCES.stone;
+        player.iron = STARTING_RESOURCES.iron;
+        player.gold = STARTING_RESOURCES.gold;
+        player.food = STARTING_RESOURCES.food;
+        
+        player.storageWood = STARTING_STORAGE_CAPACITY.wood;
+        player.storageStone = STARTING_STORAGE_CAPACITY.stone;
+        player.storageIron = STARTING_STORAGE_CAPACITY.iron;
+        player.storageGold = STARTING_STORAGE_CAPACITY.gold;
+        player.storageFood = STARTING_STORAGE_CAPACITY.food;
+        
+        // Update lastLogin
+        await this.postgres.updatePlayerLogin(persistentId);
+      } else {
+        // Neuer Spieler - erstelle in PostgreSQL
+        console.log(`🆕 Neuer Spieler: ${persistentId}`);
+        player.wood = STARTING_RESOURCES.wood;
+        player.stone = STARTING_RESOURCES.stone;
+        player.iron = STARTING_RESOURCES.iron;
+        player.gold = STARTING_RESOURCES.gold;
+        player.food = STARTING_RESOURCES.food;
+        
+        player.storageWood = STARTING_STORAGE_CAPACITY.wood;
+        player.storageStone = STARTING_STORAGE_CAPACITY.stone;
+        player.storageIron = STARTING_STORAGE_CAPACITY.iron;
+        player.storageGold = STARTING_STORAGE_CAPACITY.gold;
+        player.storageFood = STARTING_STORAGE_CAPACITY.food;
+        
+        // Erstelle Player in PostgreSQL
+        await this.postgres.createPlayer(persistentId, player.color);
+      }
+    }
     
     this.state.players.set(client.sessionId, player);
     
     console.log(`👤 ${player.username} beigetreten (${client.sessionId}) [${isAdmin ? 'Admin' : 'User'}]`);
     
-    // Prüfe ob Spieler bereits Territorium hat (aus DB laden)
+    // Lade Territorium und Gebäude aus PostgreSQL
     let hasTerritory = false;
     try {
-      const existingTiles = await this.tileDataManager.getPlayerTiles(client.sessionId);
+      const existingTiles = await this.postgres.getPlayerTiles(persistentId);
       hasTerritory = existingTiles.length > 0;
       
       if (hasTerritory) {
         console.log(`🏠 Spieler hat bereits ${existingTiles.length} Tiles`);
         
         // Setze Owner im RAM für bereits existierende Tiles
-        existingTiles.forEach(({ q, r }) => {
+        existingTiles.forEach(({ q, r }: { q: number; r: number }) => {
           const key = hexToKey({ q, r });
           const tile = this.state.tiles.get(key);
           if (tile) {
-            tile.owner = client.sessionId;
+            tile.owner = persistentId;
           }
         });
+      }
+      
+      // Lade Gebäude aus PostgreSQL
+      const playerBuildings = await this.postgres.getPlayerBuildings(persistentId);
+      console.log(`🔍 Checking for buildings for user '${persistentId}': found ${playerBuildings.length} buildings`);
+      
+      if (playerBuildings.length > 0) {
+        console.log(`🏗️ Lade ${playerBuildings.length} Gebäude für ${player.username}`);
+        
+        playerBuildings.forEach((dbBuilding: any) => {
+          if (this.state.buildings.has(dbBuilding.id)) {
+            console.log(`⚠️ Building ${dbBuilding.id} already in state, skipping`);
+            return;
+          }
+          
+          const building = new BuildingState();
+          building.id = dbBuilding.id;
+          building.type = dbBuilding.type;
+          building.q = dbBuilding.q;
+          building.r = dbBuilding.r;
+          building.owner = dbBuilding.owner;
+          building.level = dbBuilding.level;
+          // Convert timestamps from DB (bigint as string) to number
+          building.constructionStartTime = parseInt(dbBuilding.construction_start_time);
+          building.constructionEndTime = parseInt(dbBuilding.construction_end_time);
+          
+          // Berechne aktuellen Progress
+          const now = Date.now();
+          const endTime = parseInt(dbBuilding.construction_end_time);
+          const startTime = parseInt(dbBuilding.construction_start_time);
+          if (dbBuilding.completed_at || now >= endTime) {
+            building.constructionProgress = 1;
+            console.log(`✅ Building ${dbBuilding.id} (${dbBuilding.type}) is completed`);
+          } else {
+            const totalTime = endTime - startTime;
+            const elapsed = now - startTime;
+            building.constructionProgress = Math.max(0, Math.min(1, elapsed / totalTime));
+            console.log(`🏗️ Building ${dbBuilding.id} (${dbBuilding.type}) in progress: ${(building.constructionProgress * 100).toFixed(1)}%`);
+          }
+          
+          this.state.buildings.set(building.id, building);
+        });
+        
+        console.log(`✅ Total buildings in state after loading: ${this.state.buildings.size}`);
       }
     } catch (error) {
       console.error('Fehler beim Laden des Spieler-Territoriums:', error);
@@ -135,13 +240,13 @@ export class GameRoom extends Room<GameRoomState> {
     // Wenn kein Territorium: Weise neues zu
     let spawnPosition = { q: 0, r: 0 };
     if (!hasTerritory) {
-      spawnPosition = await this.assignStartingTerritory(client.sessionId, isAdmin);
+      spawnPosition = await this.assignStartingTerritory(persistentId, isAdmin); // Verwende username
     } else {
       // Berechne Zentrum des existierenden Territoriums
-      const tiles = await this.tileDataManager.getPlayerTiles(client.sessionId);
+      const tiles = await this.postgres.getPlayerTiles(persistentId);
       if (tiles.length > 0) {
-        const avgQ = tiles.reduce((sum, t) => sum + t.q, 0) / tiles.length;
-        const avgR = tiles.reduce((sum, t) => sum + t.r, 0) / tiles.length;
+        const avgQ = tiles.reduce((sum: number, t: { q: number; r: number }) => sum + t.q, 0) / tiles.length;
+        const avgR = tiles.reduce((sum: number, t: { q: number; r: number }) => sum + t.r, 0) / tiles.length;
         spawnPosition = { q: Math.round(avgQ), r: Math.round(avgR) };
       }
     }
@@ -156,16 +261,39 @@ export class GameRoom extends Room<GameRoomState> {
     // Debug: Zähle owned tiles
     let ownedCount = 0;
     this.state.tiles.forEach(tile => {
-      if (tile.owner === client.sessionId) ownedCount++;
+      if (tile.owner === persistentId) ownedCount++;
     });
     console.log(`🏠 Player owns ${ownedCount} tiles immediately after join`);
     
+    // Erstelle Redis-Session für Live-Daten
+    await this.redis.setPlayerSession({
+      username: persistentId,
+      sessionId: client.sessionId,
+      roomId: this.roomId,
+      wood: player.wood,
+      stone: player.stone,
+      iron: player.iron,
+      gold: player.gold,
+      food: player.food,
+      storageWood: player.storageWood,
+      storageStone: player.storageStone,
+      storageIron: player.storageIron,
+      storageGold: player.storageGold,
+      storageFood: player.storageFood,
+      currentResearch: player.currentResearch || null,
+      researchProgress: 0,
+      researchEndTime: player.researchEndTime || 0,
+      lastUpdate: Date.now(),
+      connectedAt: Date.now()
+    });
+    console.log(`✅ Redis session created for ${persistentId}`);
+    
     // Sende initiale sichtbare Tiles an Client (Fog-of-War)
-    this.sendVisibleTilesToClient(client.sessionId, isAdmin);
+    this.sendVisibleTilesToClient(client.sessionId, persistentId, isAdmin);
   }
   
   // Sende nur sichtbare Tiles an einen spezifischen Client
-  private sendVisibleTilesToClient(clientId: string, isAdmin: boolean) {
+  private sendVisibleTilesToClient(clientId: string, userId: string, isAdmin: boolean) {
     const VISION_RADIUS = 2;
     const visibleTiles: Array<any> = [];
     
@@ -183,10 +311,10 @@ export class GameRoom extends Room<GameRoomState> {
         });
       });
     } else {
-      // User: Sammle owned tiles
+      // User: Sammle owned tiles (nach username suchen)
       const ownedTiles: Array<{ q: number; r: number }> = [];
       this.state.tiles.forEach(tile => {
-        if (tile.owner === clientId) {
+        if (tile.owner === userId) { // Verwende userId (username) statt clientId
           ownedTiles.push({ q: tile.q, r: tile.r });
         }
       });
@@ -234,6 +362,65 @@ export class GameRoom extends Room<GameRoomState> {
     const player = this.state.players.get(client.sessionId);
     if (player) {
       console.log(`👋 ${player.username} hat verlassen`);
+      
+      // Sync: Redis (führend) → PostgreSQL (persistent backup)
+      this.redis.getPlayerSession(player.username).then(async (redisSession: any) => {
+        if (redisSession) {
+          // Speichere finale Werte aus Redis
+          console.log(`💾 Syncing ${player.username}: Redis → PostgreSQL`);
+          
+          // TODO: Resources-Tabelle in PostgreSQL hinzufügen
+          // Aktuell speichern wir nur in Redis (Live) + PostgreSQL (Player)
+          
+          // Lösche Redis-Session
+          await this.redis.deletePlayerSession(player.username);
+          console.log(`✅ Redis → PostgreSQL sync completed for ${player.username}`);
+        }
+      }).catch((err: any) => {
+        console.error(`❌ Failed to sync player data for ${player.username}:`, err);
+      });
+      
+      // Speichere Building-States in PostgreSQL
+      const playerBuildings = Array.from(this.state.buildings.values()).filter(
+        b => b.owner === player.username
+      );
+      
+      if (playerBuildings.length > 0) {
+        console.log(`💾 Speichere ${playerBuildings.length} Gebäude für ${player.username}`);
+        
+        Promise.all(playerBuildings.map(async (building) => {
+          try {
+            const existing = await this.postgres.getBuildingAtPosition(building.q, building.r);
+            
+            if (!existing) {
+              // Neu erstellen in PostgreSQL
+              await this.postgres.createBuilding({
+                id: building.id,
+                type: building.type,
+                q: building.q,
+                r: building.r,
+                owner: building.owner,
+                level: building.level,
+                construction_start_time: building.constructionStartTime,
+                construction_end_time: building.constructionEndTime
+              });
+              console.log(`✅ Building ${building.id} saved to PostgreSQL`);
+            } else if (building.constructionProgress >= 1 && !existing.completed_at) {
+              // Markiere als fertig
+              await this.postgres.completeBuilding(building.id);
+              console.log(`✅ Building ${building.id} marked as completed`);
+            }
+          } catch (err: any) {
+            console.error(`❌ Failed to save building ${building.id}:`, err);
+          }
+        })).catch((err: any) => {
+          console.error('Failed to save player buildings on leave:', err);
+        });
+      }
+      
+      console.log(`💾 Spieler-Daten für ${player.username} gespeichert`);
+      
+      // Entferne Spieler aus State
       this.state.players.delete(client.sessionId);
     }
   }
@@ -324,25 +511,43 @@ export class GameRoom extends Room<GameRoomState> {
     });
   }
 
-  private updateConstruction(deltaSeconds: number) {
+  private updateConstruction(_deltaSeconds: number) {
+    const now = Date.now();
+    
     this.state.buildings.forEach((building) => {
+      // Überspringe fertige Gebäude
       if (building.constructionProgress >= 1) return;
       
-      const def = BUILDING_DEFINITIONS[building.type as keyof typeof BUILDING_DEFINITIONS];
-      const progressPerSecond = 1 / def.constructionTime;
-      
-      building.constructionProgress = Math.min(
-        1,
-        building.constructionProgress + progressPerSecond * deltaSeconds
-      );
-      
-      if (building.constructionProgress >= 1) {
-        this.broadcast('buildingCompleted', {
-          buildingId: building.id,
-          owner: building.owner
-        });
+      // Berechne Progress basierend auf Zeitstempeln
+      if (building.constructionEndTime > 0 && building.constructionStartTime > 0) {
+        const totalTime = building.constructionEndTime - building.constructionStartTime;
+        const elapsed = now - building.constructionStartTime;
+        
+        if (now >= building.constructionEndTime) {
+          // Bau abgeschlossen
+          building.constructionProgress = 1;
+          console.log(`✅ Building completed: ${building.type} at (${building.q}, ${building.r})`);
+          
+          this.broadcast('buildingCompleted', {
+            buildingId: building.id,
+            owner: building.owner
+          });
+          
+          // Async: Persistiere Fertigstellung in DB
+          this.persistBuildingCompletion(building).catch(err => {
+            console.error('Failed to persist building completion:', err);
+          });
+        } else {
+          // Bau läuft noch
+          building.constructionProgress = Math.max(0, Math.min(1, elapsed / totalTime));
+        }
       }
     });
+  }
+  
+  private async persistBuildingCompletion(building: BuildingState): Promise<void> {
+    await this.postgres.completeBuilding(building.id);
+    console.log(`💾 Building ${building.id} completion persisted to database`);
   }
 
   private cleanupExpiredTradeOffers() {
@@ -358,7 +563,7 @@ export class GameRoom extends Room<GameRoomState> {
   // COMMAND HANDLERS
   // ===========================
 
-  private handleBuild(client: Client, command: BuildCommand) {
+  private async handleBuild(client: Client, command: BuildCommand) {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
     
@@ -387,37 +592,72 @@ export class GameRoom extends Room<GameRoomState> {
       return;
     }
     
+    // Prüfe auch in DB ob bereits ein Gebäude existiert
+    const existingInDB = await this.postgres.getBuildingAtPosition(command.position.q, command.position.r);
+    if (existingInDB) {
+      client.send('error', { message: 'Feld bereits bebaut (in DB)' });
+      return;
+    }
+    
     // Kosten abziehen
     if (def.baseCost.wood) player.wood -= def.baseCost.wood;
     if (def.baseCost.stone) player.stone -= def.baseCost.stone;
     if (def.baseCost.iron) player.iron -= def.baseCost.iron;
     if (def.baseCost.gold) player.gold -= def.baseCost.gold;
     
-    // Gebäude erstellen
+    // Gebäude erstellen mit Zeitstempeln
     const building = new BuildingState();
-    building.id = `${client.sessionId}_${Date.now()}`;
+    building.id = `${player.username}_${Date.now()}`; // Verwende username statt sessionId
     building.type = command.buildingType;
     building.q = command.position.q;
     building.r = command.position.r;
-    building.owner = client.sessionId;
+    building.owner = player.username; // Verwende username als Owner
     building.level = 1;
+    building.constructionStartTime = Date.now();
+    building.constructionEndTime = Date.now() + (def.constructionTime * 1000);
     building.constructionProgress = 0;
     
-    this.state.buildings.set(building.id, building);
+    console.log(`🏗️ Building started: ${command.buildingType} at (${command.position.q}, ${command.position.r}), will finish at ${new Date(building.constructionEndTime).toLocaleString()}`);
     
-    // Markiere Feld als besetzt
-    const tile = this.state.tiles.get(tileKey);
-    if (tile) {
-      tile.owner = client.sessionId; // Update RAM
+    // WICHTIG: Erst in DB speichern (atomare Transaktion), DANN zum State hinzufügen
+    try {
+      // Use atomic transaction for building + tile ownership + resource deduction
+      await this.postgres.buildBuildingTransaction(
+        player.username,
+        {
+          id: building.id,
+          type: building.type,
+          q: building.q,
+          r: building.r,
+          owner: building.owner,
+          level: building.level,
+          construction_start_time: building.constructionStartTime,
+          construction_end_time: building.constructionEndTime
+        },
+        def.baseCost // Resource cost already deducted from player state
+      );
+      
+      console.log(`✅ Building ${building.id} saved to DB successfully`);
+      
+      // Nur wenn DB-Speicherung erfolgreich: Füge zum State hinzu
+      this.state.buildings.set(building.id, building);
+      
+      // Markiere Feld als besetzt im RAM
+      const tile = this.state.tiles.get(tileKey);
+      if (tile) {
+        tile.owner = player.username; // Verwende username statt sessionId
+      }
+    } catch (err) {
+      console.error('❌ Failed to save building to DB:', err);
+      
+      // Gebe Ressourcen zurück wenn DB-Fehler
+      if (def.baseCost.wood) player.wood += def.baseCost.wood;
+      if (def.baseCost.stone) player.stone += def.baseCost.stone;
+      if (def.baseCost.iron) player.iron += def.baseCost.iron;
+      if (def.baseCost.gold) player.gold += def.baseCost.gold;
+      
+      client.send('error', { message: 'Fehler beim Speichern des Gebäudes' });
     }
-    
-    // Async: Update DB (fire & forget)
-    Promise.all([
-      this.tileDataManager.setTileOwner(command.position.q, command.position.r, client.sessionId),
-      this.tileDataManager.setTileBuilding(command.position.q, command.position.r, building.id)
-    ]).catch(err => {
-      console.error('Failed to save tile building data:', err);
-    });
   }
 
   private handleResearch(client: Client, command: ResearchCommand) {
@@ -544,13 +784,9 @@ export class GameRoom extends Room<GameRoomState> {
   
   private async initializeWorld() {
     try {
-      // Verbinde zu MongoDB
+      // Verbinde zu MongoDB (nur für Terrain Chunks)
       await this.chunkManager.connect();
       console.log('✅ ChunkManager connected');
-      
-      // Verbinde TileDataManager
-      this.tileDataManager = new TileDataManager();
-      await this.tileDataManager.connect();
     } catch (error) {
       console.error('❌ MongoDB nicht verfügbar:', error);
       throw new Error('MongoDB connection required for game operation');
@@ -636,7 +872,12 @@ export class GameRoom extends Room<GameRoomState> {
     
     // Async: Speichere in DB (fire & forget)
     if (tilesToOwn.length > 0) {
-      this.tileDataManager.batchSetOwner(tilesToOwn, playerId).catch(err => {
+      // Batch set tile ownership in PostgreSQL
+      Promise.all(
+        tilesToOwn.map(tile => 
+          this.postgres.setTileOwner(tile.q, tile.r, playerId)
+        )
+      ).catch(err => {
         console.error('Failed to save tile ownership:', err);
       });
     }
@@ -700,7 +941,10 @@ export class GameRoom extends Room<GameRoomState> {
       console.log(`📦 ${loadedCount} Chunks geladen (${this.state.tiles.size} Tiles total)`);
       
       // Sende aktualisierte sichtbare Tiles an Client
-      this.sendVisibleTilesToClient(client.sessionId, isAdmin);
+      const player = this.state.players.get(client.sessionId);
+      if (player) {
+        this.sendVisibleTilesToClient(client.sessionId, player.username, isAdmin);
+      }
     }
   }
   

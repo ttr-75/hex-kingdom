@@ -3,6 +3,7 @@ import { HexRenderer } from '../renderer/HexRenderer';
 import { useGameStore } from '../store/gameStore';
 import { HexCoord, BuildingType } from '@hex-kingdom/shared';
 import TileInfoPanel from './TileInfoPanel';
+import ResourcesPanel from './ResourcesPanel';
 import './GameCanvas.css';
 
 export default function GameCanvas() {
@@ -56,6 +57,11 @@ export default function GameCanvas() {
       if (rendererRef.current) {
         rendererRef.current.setMissingChunks(message.chunks);
       }
+    };
+    
+    const handleError = (message: { message: string }) => {
+      console.error('❌ Server error:', message.message);
+      alert(`Fehler: ${message.message}`);
     };
     
     const handleSetSpawnPosition = (message: { q: number; r: number }) => {
@@ -113,6 +119,7 @@ export default function GameCanvas() {
     room.onMessage('missingChunks', handleMissingChunks);
     room.onMessage('setSpawnPosition', handleSetSpawnPosition);
     room.onMessage('visibleTiles', handleVisibleTiles);
+    room.onMessage('error', handleError);
     
     return () => {
       room.removeAllListeners();
@@ -145,6 +152,11 @@ export default function GameCanvas() {
   
   // Update buildings when they change
   useEffect(() => {
+    console.log(`🏗️ Buildings in store: ${buildings.size}`);
+    buildings.forEach((building, key) => {
+      console.log(`  - ${key}: ${building.type} at (${building.q}, ${building.r}), progress: ${(building.constructionProgress * 100).toFixed(1)}%`);
+    });
+    
     if (rendererRef.current) {
       rendererRef.current.updateBuildings(buildings);
     }
@@ -163,12 +175,31 @@ export default function GameCanvas() {
     setSelectedHex(null);
   };
   
-  // Get selected tile and building data
+  // Get selected tile and building data - aktualisiert sich automatisch wenn buildings sich ändern
   const selectedTile = selectedHex ? tiles.get(`${selectedHex.q},${selectedHex.r}`) : undefined;
-  const selectedBuilding = selectedHex ? buildings.get(`${selectedHex.q},${selectedHex.r}`) : undefined;
+  
+  // Find building on the selected tile by coordinates (buildings are keyed by ID, not coordinates)
+  const selectedBuilding = selectedHex 
+    ? Array.from(buildings.values()).find(b => b.q === selectedHex.q && b.r === selectedHex.r)
+    : undefined;
+  
+  // Log building updates für debugging
+  useEffect(() => {
+    if (selectedBuilding) {
+      console.log('🔄 Selected building updated:', {
+        id: selectedBuilding.id,
+        progress: selectedBuilding.constructionProgress,
+        startTime: selectedBuilding.constructionStartTime,
+        endTime: selectedBuilding.constructionEndTime
+      });
+    }
+  }, [selectedBuilding]);
   
   return (
     <div className="game-canvas-container">
+      {/* Resources Panel - Always visible at top */}
+      <ResourcesPanel player={currentPlayer} />
+      
       <div className="game-canvas-wrapper">
         <canvas ref={canvasRef} />
         
@@ -176,27 +207,6 @@ export default function GameCanvas() {
         {missingChunks.length > 0 && (
           <div className="warning-banner">
             🐉 {missingChunks.length} Chunk(s) nicht in Datenbank gefunden - "Here be dragons!"
-          </div>
-        )}
-        
-        {/* Resource HUD */}
-        {currentPlayer && (
-          <div className="resource-hud">
-            <div className="resource-item">
-              🪵 Holz: {Math.floor(currentPlayer.wood)} / {currentPlayer.storageWood}
-            </div>
-            <div className="resource-item">
-              🪨 Stein: {Math.floor(currentPlayer.stone)} / {currentPlayer.storageStone}
-            </div>
-            <div className="resource-item">
-              ⚔️ Eisen: {Math.floor(currentPlayer.iron)} / {currentPlayer.storageIron}
-            </div>
-            <div className="resource-item">
-              💰 Gold: {Math.floor(currentPlayer.gold)} / {currentPlayer.storageGold}
-            </div>
-            <div className="resource-item">
-              🌾 Nahrung: {Math.floor(currentPlayer.food)} / {currentPlayer.storageFood}
-            </div>
           </div>
         )}
       </div>

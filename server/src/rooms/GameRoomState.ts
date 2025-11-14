@@ -39,7 +39,9 @@ export class BuildingState extends Schema {
   @type('number') r: number = 0;
   @type('string') owner: string = '';
   @type('number') level: number = 1;
-  @type('number') constructionProgress: number = 1; // 0-1
+  @type('number') constructionProgress: number = 1; // 0-1 (berechnet)
+  @type('number') constructionStartTime: number = 0; // Unix timestamp in ms
+  @type('number') constructionEndTime: number = 0; // Unix timestamp in ms
 }
 
 // Unit State

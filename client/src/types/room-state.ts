@@ -31,6 +31,8 @@ export interface BuildingState {
   owner: string;
   level: number;
   constructionProgress: number;
+  constructionStartTime: number;
+  constructionEndTime: number;
 }
 
 export interface UnitState {

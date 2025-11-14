@@ -8,7 +8,13 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "generate-world": "tsx src/scripts/generateWorld.ts",
-    "db-stats": "tsx src/scripts/dbStats.ts"
+    "db-stats": "tsx src/scripts/dbStats.ts",
+    "redis-stats": "tsx src/scripts/redisStats.ts",
+    "postgres-stats": "tsx src/scripts/postgresStats.ts",
+    "migrate-to-postgres": "tsx src/scripts/migrateToPostgres.ts",
+    "cleanup-mongodb": "tsx src/scripts/cleanupMongoDB.ts",
+    "clear-db": "tsx src/scripts/clearDatabase.ts",
+    "reset-db": "tsx src/scripts/resetDatabase.ts"
   },
   "dependencies": {
     "@colyseus/core": "^0.15.0",
@@ -19,7 +25,9 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "mongodb": "^7.0.0"
+    "mongodb": "^7.0.0",
+    "pg": "^8.16.3",
+    "redis": "^5.9.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

@@ -33,12 +33,30 @@ export const useGameStore = create<GameStore>((set, get) => ({
     room.onStateChange.once((state) => {
       console.log('📊 Initial state received:', {
         players: state.players.size,
-        buildings: state.buildings.size
+        buildings: state.buildings.size,
+        tiles: state.tiles.size
       });
       console.log('⚠️ Tiles werden NICHT aus State geladen (Fog-of-War aktiv)');
+      
+      // Konvertiere Buildings zu Plain Objects
+      const buildingsMap = new Map();
+      state.buildings.forEach((building: any, key: string) => {
+        buildingsMap.set(key, {
+          id: building.id,
+          type: building.type,
+          q: building.q,
+          r: building.r,
+          owner: building.owner,
+          level: building.level,
+          constructionProgress: building.constructionProgress,
+          constructionStartTime: building.constructionStartTime || 0,
+          constructionEndTime: building.constructionEndTime || 0
+        });
+      });
+      
       set({
         players: new Map(state.players),
-        buildings: new Map(state.buildings)
+        buildings: buildingsMap
         // tiles werden per visibleTiles Message gesendet
       });
     });
@@ -126,18 +144,46 @@ export const useGameStore = create<GameStore>((set, get) => ({
     
     // Listen auf Building-Änderungen
     room.state.buildings.onAdd((building, key) => {
-      console.log('🏗️ Building added:', key);
+      console.log('🏗️ Building added:', key, {
+        progress: building.constructionProgress,
+        startTime: (building as any).constructionStartTime,
+        endTime: (building as any).constructionEndTime
+      });
       const currentBuildings = get().buildings;
       const newBuildings = new Map(currentBuildings);
-      newBuildings.set(key, { ...building });
+      newBuildings.set(key, {
+        id: building.id,
+        type: building.type,
+        q: building.q,
+        r: building.r,
+        owner: building.owner,
+        level: building.level,
+        constructionProgress: building.constructionProgress,
+        constructionStartTime: (building as any).constructionStartTime || 0,
+        constructionEndTime: (building as any).constructionEndTime || 0
+      });
       set({ buildings: newBuildings });
       
       // Listen auf Änderungen in diesem spezifischen Building
       building.onChange(() => {
-        console.log('🔄 Building changed:', key, 'Progress:', building.constructionProgress);
+        console.log('🔄 Building changed:', key, {
+          progress: building.constructionProgress,
+          startTime: (building as any).constructionStartTime,
+          endTime: (building as any).constructionEndTime
+        });
         const currentBuildings = get().buildings;
         const newBuildings = new Map(currentBuildings);
-        newBuildings.set(key, { ...building });
+        newBuildings.set(key, {
+          id: building.id,
+          type: building.type,
+          q: building.q,
+          r: building.r,
+          owner: building.owner,
+          level: building.level,
+          constructionProgress: building.constructionProgress,
+          constructionStartTime: (building as any).constructionStartTime || 0,
+          constructionEndTime: (building as any).constructionEndTime || 0
+        });
         set({ buildings: newBuildings });
       });
     });
@@ -146,7 +192,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
       console.log('🏗️ Building onChange:', key);
       const currentBuildings = get().buildings;
       const newBuildings = new Map(currentBuildings);
-      newBuildings.set(key, { ...building });
+      newBuildings.set(key, {
+        id: building.id,
+        type: building.type,
+        q: building.q,
+        r: building.r,
+        owner: building.owner,
+        level: building.level,
+        constructionProgress: building.constructionProgress,
+        constructionStartTime: (building as any).constructionStartTime || 0,
+        constructionEndTime: (building as any).constructionEndTime || 0
+      });
       set({ buildings: newBuildings });
     });
     
