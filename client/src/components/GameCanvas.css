@@ -1,0 +1,100 @@
+.game-canvas-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Resource HUD */
+.resource-hud {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  background: rgba(26, 26, 46, 0.9);
+  border: 2px solid #4ECDC4;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 200px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.resource-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 500;
+  color: #eee;
+}
+
+/* Build Menu */
+.build-menu {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(26, 26, 46, 0.95);
+  border: 2px solid #4ECDC4;
+  border-radius: 12px;
+  padding: 24px;
+  min-width: 400px;
+  max-width: 500px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+  z-index: 1000;
+}
+
+.build-menu h3 {
+  margin: 0 0 16px 0;
+  color: #4ECDC4;
+  font-size: 20px;
+}
+
+.build-menu p {
+  margin: 0 0 16px 0;
+  color: #999;
+  font-size: 14px;
+}
+
+.build-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.build-options button {
+  background: #2a2a3e;
+  color: #eee;
+  text-align: left;
+  padding: 12px 16px;
+  font-size: 14px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.build-options button:hover {
+  background: #3a3a4e;
+  border-left: 4px solid #4ECDC4;
+}
+
+.close-btn {
+  width: 100%;
+  background: #e74c3c;
+  color: white;
+  padding: 10px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.close-btn:hover {
+  background: #c0392b;
+}
