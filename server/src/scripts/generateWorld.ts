@@ -527,6 +527,7 @@ async function generateWorld() {
           // Regeneriere Ressourcen für das neue Biom (Fisch statt alte Ressourcen)
           tile.resources = getResourcesForBiome(BiomeType.RIVER, tile.q, tile.r);
           tile.fertility = 0; // Gewässer haben keine Fruchtbarkeit
+          tile.population = undefined; // Gewässer haben keine Bevölkerung
         }
       });
 
@@ -537,6 +538,7 @@ async function generateWorld() {
           // Regeneriere Ressourcen für das neue Biom (Fisch statt alte Ressourcen)
           tile.resources = getResourcesForBiome(BiomeType.LAKE, tile.q, tile.r);
           tile.fertility = 0; // Gewässer haben keine Fruchtbarkeit
+          tile.population = undefined; // Gewässer haben keine Bevölkerung
         }
       });
 
