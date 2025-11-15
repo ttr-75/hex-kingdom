@@ -1,11 +1,12 @@
 import { Pool } from 'pg';
+import { createClient } from 'redis';
 
 /**
- * Clear PostgreSQL Database
+ * Clear PostgreSQL Database AND Redis Cache
  * 
- * Löscht ALLE Daten aus der PostgreSQL-Datenbank:
- * - Alle Tabellen werden geleert (TRUNCATE CASCADE)
- * - Foreign Key Constraints werden berücksichtigt
+ * Löscht ALLE Daten aus:
+ * - PostgreSQL-Datenbank (Alle Tabellen)
+ * - Redis Cache (Session-Daten, inkl. Player Resources)
  * 
  * WARNUNG: Diese Aktion ist irreversibel!
  */
@@ -19,8 +20,12 @@ async function clearPostgres() {
     password: process.env.POSTGRES_PASSWORD || 'hex_pass_dev'
   });
 
+  const redisClient = createClient({
+    url: process.env.REDIS_URL || 'redis://localhost:6379'
+  });
+
   try {
-    console.log('🔴 WARNUNG: PostgreSQL-Datenbank wird KOMPLETT gelöscht!');
+    console.log('🔴 WARNUNG: PostgreSQL-Datenbank UND Redis-Cache werden KOMPLETT gelöscht!');
     console.log('⏳ Starte in 3 Sekunden...\n');
     
     await new Promise(resolve => setTimeout(resolve, 3000));
@@ -98,6 +103,37 @@ async function clearPostgres() {
       throw error;
     } finally {
       client.release();
+    }
+
+    // Redis Cache leeren
+    console.log('\n🗑️  Lösche Redis Cache...');
+    try {
+      await redisClient.connect();
+      
+      // Hole alle Keys
+      const keys = await redisClient.keys('*');
+      console.log(`📊 Gefundene Redis-Keys: ${keys.length}`);
+      
+      if (keys.length > 0) {
+        // Lösche alle Keys
+        await redisClient.flushDb();
+        console.log('✅ Redis Cache komplett gelöscht');
+        
+        // Finale Prüfung
+        const remainingKeys = await redisClient.keys('*');
+        if (remainingKeys.length === 0) {
+          console.log('✅ Bestätigung: Keine Redis-Keys mehr vorhanden');
+        } else {
+          console.log(`⚠️  Warnung: ${remainingKeys.length} Key(s) noch vorhanden`);
+        }
+      } else {
+        console.log('✅ Redis Cache war bereits leer');
+      }
+      
+      await redisClient.quit();
+    } catch (redisError) {
+      console.error('❌ Fehler beim Löschen von Redis:', redisError);
+      console.log('⚠️  PostgreSQL wurde gelöscht, aber Redis konnte nicht geleert werden');
     }
 
   } catch (error) {

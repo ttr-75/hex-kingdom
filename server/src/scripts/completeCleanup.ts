@@ -127,6 +127,7 @@ async function cleanupPostgreSQL() {
     const stats = await pool.query(`
       SELECT 
         (SELECT COUNT(*) FROM players) as players,
+        (SELECT COUNT(*) FROM player_resources) as player_resources,
         (SELECT COUNT(*) FROM buildings) as buildings,
         (SELECT COUNT(*) FROM tile_ownership) as tile_ownership,
         (SELECT COUNT(*) FROM tile_exploration) as tile_exploration,
@@ -136,14 +137,18 @@ async function cleanupPostgreSQL() {
     const counts = stats.rows[0];
     console.log('📋 Aktuelle Daten:');
     console.log(`   - players: ${counts.players}`);
+    console.log(`   - player_resources: ${counts.player_resources}`);
     console.log(`   - buildings: ${counts.buildings}`);
     console.log(`   - tile_ownership: ${counts.tile_ownership}`);
     console.log(`   - tile_exploration: ${counts.tile_exploration}`);
     console.log(`   - units: ${counts.units}`);
 
     // Lösche alle Daten in der richtigen Reihenfolge (wegen Foreign Keys)
-    // 1. Buildings, tile_ownership, tile_exploration und units (haben FKs zu players)
+    // 1. Buildings, tile_ownership, tile_exploration, units und player_resources (haben FKs zu players)
     console.log('\n🗑️  Lösche Daten...');
+    
+    await pool.query('TRUNCATE TABLE unit_movements CASCADE');
+    console.log('   ✓ unit_movements gelöscht');
     
     await pool.query('TRUNCATE TABLE units CASCADE');
     console.log('   ✓ units gelöscht');
@@ -156,6 +161,9 @@ async function cleanupPostgreSQL() {
     
     await pool.query('TRUNCATE TABLE tile_exploration CASCADE');
     console.log('   ✓ tile_exploration gelöscht');
+    
+    await pool.query('TRUNCATE TABLE player_resources CASCADE');
+    console.log('   ✓ player_resources gelöscht');
     
     await pool.query('TRUNCATE TABLE players CASCADE');
     console.log('   ✓ players gelöscht');

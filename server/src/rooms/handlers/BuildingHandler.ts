@@ -1,6 +1,7 @@
 import { Client } from '@colyseus/core';
 import { GameRoomState, BuildingState, PlayerState } from '../GameRoomState.js';
 import { PostgresManager } from '../../database/PostgresManager.js';
+import { ProductionSystem } from '../systems/ProductionSystem.js';
 import {
   BUILDING_DEFINITIONS,
   BuildCommand,
@@ -13,6 +14,7 @@ export class BuildingHandler {
   constructor(
     private state: GameRoomState,
     private postgres: PostgresManager,
+    private productionSystem: ProductionSystem,
     private getPlayerByClient: (client: Client) => PlayerState | undefined
   ) {}
 
@@ -168,6 +170,11 @@ export class BuildingHandler {
           
           this.postgres.completeBuilding(building.id).catch(err => {
             console.error('Failed to persist building completion:', err);
+          });
+          
+          // Initialisiere Production State für fertiggestelltes Gebäude
+          this.productionSystem.saveProductionState(building.owner).catch(err => {
+            console.error('Failed to save production state after building completion:', err);
           });
         } else {
           building.constructionProgress = Math.max(0, Math.min(1, elapsed / totalTime));

@@ -21,6 +21,17 @@ export interface TileOwnership {
   last_modified: Date;
 }
 
+export interface BuildingProductionState {
+  buildingId: string;
+  lastUpdateTime: number;
+  productionRates: {
+    wood?: number;
+    stone?: number;
+    iron?: number;
+    food?: number;
+  };
+}
+
 export class BuildingRepository {
   constructor(private pool: Pool) {}
 
@@ -45,12 +56,27 @@ export class BuildingRepository {
       )
     `);
 
+    // Building Production State Table (für Offline-Produktion)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS building_production (
+        building_id VARCHAR(255) PRIMARY KEY,
+        last_update_time BIGINT NOT NULL,
+        production_rates JSONB NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        CONSTRAINT fk_production_building FOREIGN KEY (building_id)
+          REFERENCES buildings(id) ON DELETE CASCADE
+      )
+    `);
+
     // Indexes
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_buildings_owner ON buildings(owner)
     `);
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_buildings_coords ON buildings(q, r)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_building_production_update_time ON building_production(last_update_time)
     `);
   }
 
@@ -243,5 +269,90 @@ export class BuildingRepository {
       [q, r]
     );
     return result.rowCount || 0;
+  }
+
+  // ===========================
+  // BUILDING PRODUCTION STATE (für Offline-Produktion)
+  // ===========================
+
+  /**
+   * Speichere Production State für ein Gebäude
+   */
+  async saveProductionState(state: BuildingProductionState): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO building_production (building_id, last_update_time, production_rates)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (building_id) DO UPDATE SET
+         last_update_time = $2,
+         production_rates = $3`,
+      [
+        state.buildingId,
+        state.lastUpdateTime,
+        JSON.stringify(state.productionRates)
+      ]
+    );
+  }
+
+  /**
+   * Hole Production States für alle Gebäude eines Spielers
+   */
+  async getPlayerProductionStates(owner: string): Promise<BuildingProductionState[]> {
+    const result = await this.pool.query(
+      `SELECT bp.building_id, bp.last_update_time, bp.production_rates
+       FROM building_production bp
+       JOIN buildings b ON bp.building_id = b.id
+       WHERE b.owner = $1`,
+      [owner]
+    );
+
+    return result.rows.map(row => ({
+      buildingId: row.building_id,
+      lastUpdateTime: parseInt(row.last_update_time),
+      productionRates: row.production_rates
+    }));
+  }
+
+  /**
+   * Hole Production State für ein spezifisches Gebäude
+   */
+  async getProductionState(buildingId: string): Promise<BuildingProductionState | null> {
+    const result = await this.pool.query(
+      'SELECT * FROM building_production WHERE building_id = $1',
+      [buildingId]
+    );
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    return {
+      buildingId: row.building_id,
+      lastUpdateTime: parseInt(row.last_update_time),
+      productionRates: row.production_rates
+    };
+  }
+
+  /**
+   * Lösche Production State (wenn Gebäude zerstört wird)
+   */
+  async deleteProductionState(buildingId: string): Promise<void> {
+    await this.pool.query(
+      'DELETE FROM building_production WHERE building_id = $1',
+      [buildingId]
+    );
+  }
+
+  /**
+   * Aktualisiere nur last_update_time für mehrere Gebäude
+   * (Batch-Update für Performance)
+   */
+  async updateProductionTimestamps(buildingIds: string[], timestamp: number): Promise<void> {
+    if (buildingIds.length === 0) return;
+    
+    await this.pool.query(
+      `UPDATE building_production 
+       SET last_update_time = $1 
+       WHERE building_id = ANY($2)`,
+      [timestamp, buildingIds]
+    );
   }
 }

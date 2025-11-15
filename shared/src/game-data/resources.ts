@@ -4,6 +4,7 @@ import { ResourceType } from '../types';
 // STARTING RESOURCES
 // ===========================
 
+/*
 export const STARTING_RESOURCES = {
   [ResourceType.WOOD]: 100,
   [ResourceType.STONE]: 80,
@@ -12,12 +13,22 @@ export const STARTING_RESOURCES = {
   [ResourceType.FOOD]: 100,
   [ResourceType.FISH]: 100
 };
+*/
+
+export const STARTING_RESOURCES = {
+  [ResourceType.WOOD]: 1000,
+  [ResourceType.STONE]: 800,
+  [ResourceType.IRON]: 400,
+  [ResourceType.GOLD]: 500,
+  [ResourceType.FOOD]: 1000,
+  [ResourceType.FISH]: 1000
+};
 
 export const STARTING_STORAGE_CAPACITY = {
-  [ResourceType.WOOD]: 500,
-  [ResourceType.STONE]: 500,
-  [ResourceType.IRON]: 300,
-  [ResourceType.GOLD]: 200,
-  [ResourceType.FOOD]: 400,
-  [ResourceType.FISH]: 400
+  [ResourceType.WOOD]: 5000,
+  [ResourceType.STONE]: 5000,
+  [ResourceType.IRON]: 3000,
+  [ResourceType.GOLD]: 2000,
+  [ResourceType.FOOD]: 4000,
+  [ResourceType.FISH]: 4000
 };

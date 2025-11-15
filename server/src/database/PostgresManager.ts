@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { PlayerRepository, Player } from './repositories/PlayerRepository';
-import { BuildingRepository, Building, TileOwnership } from './repositories/BuildingRepository';
+import { BuildingRepository, Building, TileOwnership, BuildingProductionState } from './repositories/BuildingRepository';
 import { UnitRepository, Unit, UnitMovement } from './repositories/UnitRepository';
 import { TileRepository } from './repositories/TileRepository';
 import { TileDataManager } from './TileDataManager';
@@ -24,7 +24,7 @@ import { ChunkManager } from './ChunkManager';
  */
 
 // Re-export types for backward compatibility
-export type { Player, Building, TileOwnership, Unit, UnitMovement };
+export type { Player, Building, TileOwnership, Unit, UnitMovement, BuildingProductionState };
 
 export class PostgresManager {
   private pool: Pool;
@@ -346,6 +346,30 @@ export class PostgresManager {
 
   async deleteUnitMovement(unitId: string): Promise<void> {
     return this.units.deleteUnitMovement(unitId);
+  }
+
+  // ===========================
+  // BUILDING PRODUCTION (Delegate to BuildingRepository)
+  // ===========================
+
+  async saveProductionState(state: BuildingProductionState): Promise<void> {
+    return this.buildings.saveProductionState(state);
+  }
+
+  async getPlayerProductionStates(owner: string): Promise<BuildingProductionState[]> {
+    return this.buildings.getPlayerProductionStates(owner);
+  }
+
+  async getProductionState(buildingId: string): Promise<BuildingProductionState | null> {
+    return this.buildings.getProductionState(buildingId);
+  }
+
+  async deleteProductionState(buildingId: string): Promise<void> {
+    return this.buildings.deleteProductionState(buildingId);
+  }
+
+  async updateProductionTimestamps(buildingIds: string[], timestamp: number): Promise<void> {
+    return this.buildings.updateProductionTimestamps(buildingIds, timestamp);
   }
 
   // ===========================

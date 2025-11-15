@@ -125,7 +125,7 @@ export class GameRoom extends Room<GameRoomState> {
       (player, unit, unitDef) => this.explorationSystem.handleUnitExploration(player, unit, unitDef),
       (player) => this.visibilitySystem.updatePlayerVisibility(player)
     );
-    this.productionSystem = new ProductionSystem(this.state);
+    this.productionSystem = new ProductionSystem(this.state, this.postgres);
     
     // Initialize Handlers
     this.unitHandler = new UnitHandler(
@@ -138,6 +138,7 @@ export class GameRoom extends Room<GameRoomState> {
     this.buildingHandler = new BuildingHandler(
       this.state,
       this.postgres,
+      this.productionSystem,
       (client: Client) => this.getPlayerByClient(client)
     );
     
@@ -406,6 +407,9 @@ export class GameRoom extends Room<GameRoomState> {
       
       // Restore active movements for this player's units
       await this.restorePlayerMovements(persistentId);
+      
+      // Restore offline production
+      await this.productionSystem.restoreOfflineProduction(persistentId);
     } catch (error) {
       console.error('Fehler beim Laden des Spieler-Territoriums:', error);
     }
@@ -657,6 +661,11 @@ export class GameRoom extends Room<GameRoomState> {
     
     if (player) {
       console.log(`👋 ${player.username} hat verlassen`);
+      
+      // Speichere Production State (für Offline-Produktion)
+      this.productionSystem.saveProductionState(player.username).catch((err: any) => {
+        console.error(`❌ Failed to save production state for ${player.username}:`, err);
+      });
       
       // Sync: RAM → PostgreSQL (persistent backup)
       this.savePlayerDataOnLeave(player).catch((err: any) => {

@@ -127,6 +127,7 @@ async function recreatePostgresSchema() {
       await client.query('DROP TABLE IF EXISTS tile_exploration CASCADE');
       await client.query('DROP TABLE IF EXISTS tile_ownership CASCADE');
       await client.query('DROP TABLE IF EXISTS buildings CASCADE');
+      await client.query('DROP TABLE IF EXISTS player_resources CASCADE');
       await client.query('DROP TABLE IF EXISTS players CASCADE');
       console.log('✅ Alte Tabellen gelöscht');
 
@@ -138,6 +139,27 @@ async function recreatePostgresSchema() {
           color VARCHAR(7) NOT NULL,
           created_at TIMESTAMP DEFAULT NOW(),
           last_login TIMESTAMP DEFAULT NOW()
+        )
+      `);
+
+      // Erstelle Player Resources Tabelle
+      console.log('📋 Erstelle player_resources Tabelle...');
+      await client.query(`
+        CREATE TABLE player_resources (
+          username VARCHAR(255) PRIMARY KEY REFERENCES players(username) ON DELETE CASCADE,
+          wood NUMERIC(10,2) DEFAULT 0,
+          stone NUMERIC(10,2) DEFAULT 0,
+          iron NUMERIC(10,2) DEFAULT 0,
+          gold NUMERIC(10,2) DEFAULT 0,
+          food NUMERIC(10,2) DEFAULT 0,
+          fish NUMERIC(10,2) DEFAULT 0,
+          storage_wood INTEGER DEFAULT 1000,
+          storage_stone INTEGER DEFAULT 1000,
+          storage_iron INTEGER DEFAULT 1000,
+          storage_gold INTEGER DEFAULT 1000,
+          storage_food INTEGER DEFAULT 1000,
+          storage_fish INTEGER DEFAULT 1000,
+          last_updated TIMESTAMP DEFAULT NOW()
         )
       `);
 

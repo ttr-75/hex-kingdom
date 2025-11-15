@@ -12,6 +12,7 @@
     "redis-stats": "tsx src/scripts/redisStats.ts",
     "postgres-stats": "tsx src/scripts/postgresStats.ts",
     "cleanup-mongodb": "tsx src/scripts/cleanupMongoDB.ts",
+    "clear-redis": "tsx src/scripts/clearRedis.ts",
     "clear-postgres": "tsx src/scripts/clearPostgres.ts",
     "clear-db": "tsx src/scripts/clearDatabase.ts",
     "reset-db": "tsx src/scripts/resetDatabase.ts",
@@ -19,7 +20,9 @@
     "recreate-postgres": "tsx src/scripts/recreatePostgresSchema.ts",
     "full-reset": "tsx src/scripts/fullReset.ts",
     "migration:multiple-buildings": "tsx src/scripts/migrateMultipleBuildings.ts",
-    "migrate:tile-resources": "tsx src/scripts/migrateTileResources.ts"
+    "migrate:tile-resources": "tsx src/scripts/migrateTileResources.ts",
+    "init:production-states": "tsx src/scripts/initializeProductionStates.ts",
+    "check:tables": "tsx src/scripts/checkTables.ts"
   },
   "dependencies": {
     "@colyseus/core": "^0.15.0",
