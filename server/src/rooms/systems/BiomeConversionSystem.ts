@@ -121,6 +121,33 @@ export class BiomeConversionSystem {
             }
         }
 
+        // Prüfe erforderliche Gebäude-Anzahlen
+        if (criteria.requiredBuildingCounts) {
+            const buildingCounts = new Map<string, number>();
+            
+            // Zähle Gebäude nach Typ
+            for (const building of buildingsOnTile) {
+                const count = buildingCounts.get(building.type) || 0;
+                buildingCounts.set(building.type, count + 1);
+            }
+
+            if (debug) {
+                console.log(`   Building counts:`, Object.fromEntries(buildingCounts));
+                console.log(`   Required counts:`, criteria.requiredBuildingCounts);
+            }
+
+            // Prüfe jede Anforderung
+            for (const [buildingType, requiredCount] of Object.entries(criteria.requiredBuildingCounts)) {
+                const actualCount = buildingCounts.get(buildingType) || 0;
+                if (actualCount < requiredCount) {
+                    if (debug) {
+                        console.log(`   ❌ Not enough ${buildingType}: ${actualCount}/${requiredCount}`);
+                    }
+                    return false;
+                }
+            }
+        }
+
         // Prüfe Population
         if (criteria.minPopulation !== undefined) {
             const population = tile.population || 0;

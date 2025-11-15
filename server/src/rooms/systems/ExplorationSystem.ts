@@ -12,7 +12,6 @@ export class ExplorationSystem {
     private state: GameRoomState,
     private postgres: PostgresManager,
     private visibilitySystem: VisibilitySystem,
-    private getClients: () => Client[],
     private getClientByUsername: (username: string) => Client | undefined
   ) {}
 

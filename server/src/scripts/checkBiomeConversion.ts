@@ -61,23 +61,33 @@ async function checkBiomeConversion() {
         console.log('   ❌ No tile data found');
       }
 
-      // 3. Check Buildings (alle Gebäude)
+      // 3. Check Buildings (alle Gebäude des Besitzers)
       console.log('\n🏗️  Buildings:');
-      const allBuildings = await postgres.buildings.getAllBuildings();
-      const buildingsOnTile = allBuildings.filter(b => b.q === target.q && b.r === target.r);
+      if (!tileOwner) {
+        console.log('   ❌ No owner, skipping building check');
+        continue;
+      }
+      
+      const allBuildings = await postgres.getPlayerBuildings(tileOwner);
+      const buildingsOnTile = allBuildings.filter((b: any) => b.q === target.q && b.r === target.r);
       
       console.log(`   Total Buildings: ${buildingsOnTile.length}`);
       
-      const completedBuildings = buildingsOnTile.filter(b => b.constructionProgress >= 1);
+      // Berechne constructionProgress für jedes Gebäude
+      const now = Date.now();
+      const completedBuildings = buildingsOnTile.filter((b: any) => {
+        const endTime = parseInt(b.construction_end_time as string);
+        return b.completed_at || now >= endTime;
+      });
       console.log(`   Completed Buildings: ${completedBuildings.length}`);
       
       if (completedBuildings.length > 0) {
-        completedBuildings.forEach(b => {
+        completedBuildings.forEach((b: any) => {
           console.log(`      - ${b.type} (Level ${b.level}, Owner: ${b.owner})`);
         });
       }
 
-      const buildingTypes = completedBuildings.map(b => b.type);
+      const buildingTypes = completedBuildings.map((b: any) => b.type);
       const hasResidence = buildingTypes.includes(BuildingType.RESIDENCE);
       console.log(`   Has Residence: ${hasResidence ? '✅' : '❌'}`);
 

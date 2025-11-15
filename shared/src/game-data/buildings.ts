@@ -88,5 +88,35 @@ export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
     maxLevel: 10,
     upgradeMultiplier: 1.5,
     housingCapacity: 4 // 4 Einwohner pro Level
+  },
+  [BuildingType.GRANARY]: {
+    type: BuildingType.GRANARY,
+    name: 'Kornspeicher',
+    icon: '🌾',
+    description: 'Speichert Nahrungsmittel und erhöht die Nahrungskapazität',
+    baseCost: { wood: 70, stone: 50, food: 30 },
+    constructionTime: 80,
+    maxLevel: 5,
+    upgradeMultiplier: 1.4
+  },
+  [BuildingType.WELL]: {
+    type: BuildingType.WELL,
+    name: 'Brunnen',
+    icon: '💧',
+    description: 'Liefert frisches Wasser für die Bevölkerung',
+    baseCost: { wood: 40, stone: 60 },
+    constructionTime: 60,
+    maxLevel: 3,
+    upgradeMultiplier: 1.5
+  },
+  [BuildingType.TAVERN]: {
+    type: BuildingType.TAVERN,
+    name: 'Gasthaus',
+    icon: '🍺',
+    description: 'Erhöht die Zufriedenheit und Moral der Bevölkerung',
+    baseCost: { wood: 80, stone: 40, food: 50, gold: 30 },
+    constructionTime: 100,
+    maxLevel: 3,
+    upgradeMultiplier: 1.6
   }
 };

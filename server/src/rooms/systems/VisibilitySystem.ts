@@ -13,7 +13,6 @@ export class VisibilitySystem {
   constructor(
     private state: GameRoomState,
     private postgres: PostgresManager,
-    private getClients: () => Client[],
     private getClientByUsername: (username: string) => Client | undefined
   ) {}
 

@@ -59,7 +59,10 @@ export enum BuildingType {
   MARKETPLACE = 'marketplace', // Ermöglicht Handel
   BARRACKS = 'barracks',   // Rekrutiert Einheiten
   RESEARCH_LAB = 'research_lab', // Ermöglicht Forschung
-  RESIDENCE = 'residence'  // Beherbergt Einwohner
+  RESIDENCE = 'residence',  // Beherbergt Einwohner
+  GRANARY = 'granary',     // Speichert Nahrung
+  WELL = 'well',           // Liefert Wasser
+  TAVERN = 'tavern'        // Erhöht Zufriedenheit
 }
 
 export interface Building {
@@ -297,7 +300,8 @@ export interface BiomeDefinition {
   conversionCriteria?: {
     minPopulation?: number;       // Mindest-Einwohner auf dem Tile
     minBuildings?: number;        // Mindest-Anzahl Gebäude
-    requiredBuildingTypes?: BuildingType[]; // Bestimmte Gebäude-Typen erforderlich
+    requiredBuildingTypes?: BuildingType[]; // Bestimmte Gebäude-Typen erforderlich (mindestens 1 von jedem)
+    requiredBuildingCounts?: Partial<Record<BuildingType, number>>; // Genaue Anzahl pro Gebäudetyp
   };
   
   // Visuelle Eigenschaften

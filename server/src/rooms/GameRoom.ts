@@ -16,6 +16,10 @@ import {
   STARTING_STORAGE_CAPACITY,
   TECHNOLOGY_DEFINITIONS,
   UNIT_DEFINITIONS,
+  BuildingType,
+  BiomeType,
+  BUILDING_DEFINITIONS,
+  BIOME_DEFINITIONS,
   hexToKey
 } from '@hex-kingdom/shared';
 import { ChunkManager } from '../database/ChunkManager.js';
@@ -111,14 +115,12 @@ export class GameRoom extends Room<GameRoomState> {
     this.visibilitySystem = new VisibilitySystem(
       this.state,
       this.postgres,
-      () => Array.from(this.clients),
       (username: string) => this.getClientByUsername(username)
     );
     this.explorationSystem = new ExplorationSystem(
       this.state,
       this.postgres,
       this.visibilitySystem,
-      () => Array.from(this.clients),
       (username: string) => this.getClientByUsername(username)
     );
     this.movementSystem = new MovementSystem(
@@ -1085,6 +1087,87 @@ export class GameRoom extends Room<GameRoomState> {
     }
   }
   
+  /**
+   * Erstellt ein Starter-Settlement in der Mitte des Kingdom eines neuen Spielers
+   * mit allen erforderlichen Gebäuden und 28 Einwohnern
+   */
+  private async createStarterSettlement(playerId: string, centerQ: number, centerR: number): Promise<void> {
+    console.log(`🏰 Creating starter settlement for ${playerId} at (${centerQ}, ${centerR})...`);
+    
+    // Hole die erforderlichen Gebäude aus der Settlement-Definition
+    const settlementDef = BIOME_DEFINITIONS[BiomeType.SETTLEMENT];
+    const requiredBuildingCounts = settlementDef.conversionCriteria?.requiredBuildingCounts;
+    
+    if (!requiredBuildingCounts) {
+      console.error('❌ No required building counts defined for SETTLEMENT biome!');
+      return;
+    }
+    
+    // Konvertiere zu Array-Format
+    const requiredBuildings = Object.entries(requiredBuildingCounts).map(([type, count]) => ({
+      type: type as BuildingType,
+      count: count
+    }));
+    
+    let totalBuildings = 0;
+    const now = Date.now();    // Erstelle alle Gebäude (bereits fertiggestellt)
+    for (const buildingReq of requiredBuildings) {
+      for (let i = 0; i < buildingReq.count; i++) {
+        const buildingDef = BUILDING_DEFINITIONS[buildingReq.type];
+        const constructionTime = buildingDef.constructionTime * 1000; // Sekunden -> Millisekunden
+        
+        const building = new BuildingState();
+        building.id = `building_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        building.type = buildingReq.type;
+        building.q = centerQ;
+        building.r = centerR;
+        building.owner = playerId;
+        building.level = 1;
+        building.constructionStartTime = now - constructionTime; // Bereits fertig
+        building.constructionEndTime = now; // Bereits fertig
+        building.constructionProgress = 1.0; // Fertig
+        
+        // Füge zum State hinzu
+        this.state.buildings.set(building.id, building);
+        
+        // Speichere in PostgreSQL
+        await this.postgres.createBuilding({
+          id: building.id,
+          type: building.type,
+          q: building.q,
+          r: building.r,
+          owner: building.owner,
+          level: building.level,
+          construction_start_time: building.constructionStartTime,
+          construction_end_time: building.constructionEndTime
+        });
+        
+        totalBuildings++;
+        console.log(`   ✅ Created ${buildingDef.icon} ${buildingDef.name} (${totalBuildings}/${Object.keys(requiredBuildingCounts).length})`);
+      }
+    }
+    
+    // Verwende Population aus Settlement-Definition
+    const settlementPopulation = settlementDef.populationSpawn?.amount.max || 28;
+    
+    // Setze Biom auf SETTLEMENT und Population in PostgreSQL
+    await this.postgres.setTileBiome(centerQ, centerR, BiomeType.SETTLEMENT);
+    await this.postgres.setTilePopulation(centerQ, centerR, settlementPopulation);
+    
+    // Update auch im State
+    const tileKey = hexToKey({ q: centerQ, r: centerR });
+    const tile = this.state.tiles.get(tileKey);
+    if (tile) {
+      tile.biome = BiomeType.SETTLEMENT;
+      tile.population = settlementPopulation;
+      tile.fertility = 0; // Settlements haben keine Fruchtbarkeit
+      tile.resources.clear(); // Entferne natürliche Ressourcen
+    }
+    
+    console.log(`   ✅ Set biome to SETTLEMENT with ${settlementPopulation} population`);
+    console.log(`   🎉 Starter settlement complete! Total buildings: ${totalBuildings}`);
+  }
+
   private async assignStartingTerritory(playerId: string, isAdmin: boolean = false): Promise<{ q: number; r: number }> {
     const config = isAdmin ? PLAYER_CONFIG.admin : PLAYER_CONFIG.user;
     
@@ -1155,7 +1238,7 @@ export class GameRoom extends Room<GameRoomState> {
     // Async: Speichere in DB und lade Population zurück
     if (tilesToOwn.length > 0) {
       // 🎯 Verwende claimTile() für konsistentes Tile-Claiming
-      Promise.all(
+      await Promise.all(
         tilesToOwn.map(async tile => {
           await this.postgres.claimTile(tile.q, tile.r, playerId);
           // Lade Population aus DB und synchronisiere mit State
@@ -1169,6 +1252,15 @@ export class GameRoom extends Room<GameRoomState> {
       ).catch(err => {
         console.error('Failed to claim tiles:', err);
       });
+      
+      // Erstelle Starter-Settlement in der Mitte (nur für normale User, nicht für Admin)
+      if (!isAdmin) {
+        try {
+          await this.createStarterSettlement(playerId, spawnQ, spawnR);
+        } catch (error) {
+          console.error(`❌ Error creating starter settlement for ${playerId}:`, error);
+        }
+      }
     }
     
     // Gebe Spawn-Position zurück

@@ -290,8 +290,16 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
     canSpawnNaturally: false, // Kann NICHT während Weltgenerierung spawnen
     conversionCriteria: {
       minPopulation: 5,       // Mindestens 5 Einwohner
-      minBuildings: 3,        // Mindestens 3 Gebäude
-      requiredBuildingTypes: [BuildingType.RESIDENCE] // Mindestens ein Wohngebäude
+      minBuildings: 13,       // Mindestens 13 Gebäude total (1+1+7+1+1+1+1)
+      requiredBuildingCounts: {
+        [BuildingType.MARKETPLACE]: 1,  // 1 Marktplatz
+        [BuildingType.BARRACKS]: 1,     // 1 Kaserne
+        [BuildingType.RESIDENCE]: 7,    // 7 Häuser
+        [BuildingType.WAREHOUSE]: 1,    // 1 Lager
+        [BuildingType.GRANARY]: 1,      // 1 Kornspeicher
+        [BuildingType.WELL]: 1,         // 1 Brunnen
+        [BuildingType.TAVERN]: 1        // 1 Gasthaus
+      }
     },
     color: '#974430',         // Braun-beige für Siedlungen
     shadowColor: '#773420'    // Dunkleres Braun für Schatten
