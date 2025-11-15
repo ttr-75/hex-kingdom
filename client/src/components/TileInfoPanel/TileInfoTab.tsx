@@ -53,7 +53,7 @@ export default function TileInfoTab({ tile, currentPlayer }: TileInfoTabProps) {
           ) : (
             // Fremde oder unbeanspruchte Tiles: Ressourcen nicht sichtbar
             <p className="resource" style={{ fontStyle: 'italic' }}>
-              🔒 Ressourcen nicht erkennbar
+              🏳️ Nicht beansprucht
             </p>
           )}
         </div>
