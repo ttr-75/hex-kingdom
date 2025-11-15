@@ -13,7 +13,7 @@ import {
   AcceptTradeOfferCommand,
   MoveUnitCommand,
   STARTING_RESOURCES,
-  STARTING_STORAGE_CAPACITY,
+  BASE_STORAGE_CAPACITY,
   TECHNOLOGY_DEFINITIONS,
   UNIT_DEFINITIONS,
   BuildingType,
@@ -98,6 +98,50 @@ export class GameRoom extends Room<GameRoomState> {
     return undefined;
   }
 
+  // Calculate storage capacity based on buildings (public for handlers)
+  public calculateStorageCapacity(player: PlayerState): void {
+    // Start with base capacity
+    player.storageWood = BASE_STORAGE_CAPACITY.wood;
+    player.storageStone = BASE_STORAGE_CAPACITY.stone;
+    player.storageIron = BASE_STORAGE_CAPACITY.iron;
+    player.storageGold = BASE_STORAGE_CAPACITY.gold;
+    player.storageFood = BASE_STORAGE_CAPACITY.food;
+    player.storageFish = BASE_STORAGE_CAPACITY.fish;
+
+    // Add capacity from warehouses and granaries
+    this.state.buildings.forEach((building) => {
+      if (building.owner !== player.username) return;
+      if (building.constructionProgress < 1) return; // Only completed buildings
+      
+      const def = BUILDING_DEFINITIONS[building.type as BuildingType];
+      if (!def?.storageCapacity) return;
+
+      // Add capacity per level
+      const multiplier = building.level;
+      
+      if (def.storageCapacity.wood) {
+        player.storageWood += def.storageCapacity.wood * multiplier;
+      }
+      if (def.storageCapacity.stone) {
+        player.storageStone += def.storageCapacity.stone * multiplier;
+      }
+      if (def.storageCapacity.iron) {
+        player.storageIron += def.storageCapacity.iron * multiplier;
+      }
+      if (def.storageCapacity.gold) {
+        player.storageGold += def.storageCapacity.gold * multiplier;
+      }
+      if (def.storageCapacity.food) {
+        player.storageFood += def.storageCapacity.food * multiplier;
+      }
+      if (def.storageCapacity.fish) {
+        player.storageFish += def.storageCapacity.fish * multiplier;
+      }
+    });
+
+    console.log(`📦 Storage capacity for ${player.username}: Wood=${player.storageWood}, Stone=${player.storageStone}, Iron=${player.storageIron}, Gold=${player.storageGold}, Food=${player.storageFood}, Fish=${player.storageFish}`);
+  }
+
   async onCreate(_options: any) {
     this.setState(new GameRoomState());
     this.state.tickRate = 10; // 10 Updates pro Sekunde
@@ -149,7 +193,8 @@ export class GameRoom extends Room<GameRoomState> {
       this.postgres,
       this.productionSystem,
       (client: Client) => this.getPlayerByClient(client),
-      this.biomeConversionSystem
+      this.biomeConversionSystem,
+      (player: PlayerState) => this.calculateStorageCapacity(player)
     );
     
     // Load initial world data from MongoDB
@@ -279,13 +324,6 @@ export class GameRoom extends Room<GameRoomState> {
           player.gold = STARTING_RESOURCES.gold;
           player.food = STARTING_RESOURCES.food;
           player.fish = STARTING_RESOURCES.fish;
-          
-          player.storageWood = STARTING_STORAGE_CAPACITY.wood;
-          player.storageStone = STARTING_STORAGE_CAPACITY.stone;
-          player.storageIron = STARTING_STORAGE_CAPACITY.iron;
-          player.storageGold = STARTING_STORAGE_CAPACITY.gold;
-          player.storageFood = STARTING_STORAGE_CAPACITY.food;
-          player.storageFish = STARTING_STORAGE_CAPACITY.fish;
         }
         
         // Update lastLogin
@@ -299,13 +337,6 @@ export class GameRoom extends Room<GameRoomState> {
         player.gold = STARTING_RESOURCES.gold;
         player.food = STARTING_RESOURCES.food;
         player.fish = STARTING_RESOURCES.fish;
-        
-        player.storageWood = STARTING_STORAGE_CAPACITY.wood;
-        player.storageStone = STARTING_STORAGE_CAPACITY.stone;
-        player.storageIron = STARTING_STORAGE_CAPACITY.iron;
-        player.storageGold = STARTING_STORAGE_CAPACITY.gold;
-        player.storageFood = STARTING_STORAGE_CAPACITY.food;
-        player.storageFish = STARTING_STORAGE_CAPACITY.fish;
         
         // Erstelle Player in PostgreSQL
         try {
@@ -439,6 +470,9 @@ export class GameRoom extends Room<GameRoomState> {
       
       // Restore offline production
       await this.productionSystem.restoreOfflineProduction(persistentId);
+      
+      // Calculate storage capacity based on buildings
+      this.calculateStorageCapacity(player);
     } catch (error) {
       console.error('Fehler beim Laden des Spieler-Territoriums:', error);
     }

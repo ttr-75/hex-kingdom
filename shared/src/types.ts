@@ -86,6 +86,7 @@ export interface BuildingDefinition {
   maxLevel: number;
   upgradeMultiplier: number; // Kosten-Multiplikator pro Level
   housingCapacity?: number; // Anzahl der Einwohner pro Level
+  storageCapacity?: Partial<Resources>; // Lagerkapazität pro Level
 }
 
 // ===========================

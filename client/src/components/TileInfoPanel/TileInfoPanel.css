@@ -232,6 +232,67 @@
   margin-top: 12px;
 }
 
+/* Compact Buildings List */
+.buildings-compact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.building-compact-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, rgba(244, 228, 193, 0.3) 0%, rgba(218, 185, 127, 0.2) 100%);
+  border: 2px solid rgba(139, 90, 43, 0.4);
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.building-compact-item:hover {
+  background: linear-gradient(180deg, rgba(244, 228, 193, 0.4) 0%, rgba(218, 185, 127, 0.3) 100%);
+  border-color: rgba(139, 90, 43, 0.6);
+  transform: translateX(2px);
+}
+
+.building-compact-icon {
+  font-size: 24px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.building-compact-name {
+  flex: 1;
+  font-family: 'Cinzel', 'Georgia', serif;
+  font-size: 15px;
+  font-weight: 600;
+  color: #3d2817;
+}
+
+.building-compact-level {
+  background: linear-gradient(180deg, rgba(212, 175, 55, 0.9) 0%, rgba(184, 134, 11, 0.9) 100%);
+  color: #2a1a0f;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid rgba(139, 69, 19, 0.6);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
+}
+
+.building-compact-progress {
+  font-size: 12px;
+  color: #8b4513;
+  font-weight: 600;
+  padding: 3px 8px;
+  background: rgba(139, 69, 19, 0.2);
+  border-radius: 6px;
+  border: 1px solid rgba(139, 69, 19, 0.3);
+  flex-shrink: 0;
+}
+
 .recruit-section {
   margin-top: 12px;
   padding-top: 12px;
@@ -815,6 +876,83 @@
   font-style: italic;
   padding: 40px 20px;
   font-size: 15px;
+}
+
+.kingdom-hint {
+  text-align: center;
+  color: rgba(244, 228, 193, 0.5);
+  font-style: italic;
+  font-size: 13px;
+  margin-top: 20px;
+  padding: 12px;
+  background: rgba(61, 40, 23, 0.3);
+  border-radius: 6px;
+  border: 1px dashed rgba(139, 90, 43, 0.4);
+}
+
+/* Kingdom Resources Grid */
+.kingdom-resources {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.resource-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(244, 228, 193, 0.5);
+  border: 1px solid rgba(139, 90, 43, 0.5);
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.resource-item:hover {
+  background: rgba(244, 228, 193, 0.65);
+  border-color: rgba(139, 90, 43, 0.7);
+  transform: translateX(2px);
+}
+
+.resource-item .resource-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.resource-item .resource-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e8e8e8;
+
+}
+
+.resource-item .resource-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #e8e8e8;
+  white-space: nowrap;
+}
+
+/* Kingdom Stats */
+.kingdom-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kingdom-stats p {
+  margin: 0;
+  font-size: 14px;
+  color: #2a1a0f;
+  padding: 6px 8px;
+  background: rgba(244, 228, 193, 0.1);
+  border-radius: 4px;
+}
+
+.kingdom-stats strong {
+  color: #3d2817;
+  margin-right: 8px;
 }
 
 /* Units List */

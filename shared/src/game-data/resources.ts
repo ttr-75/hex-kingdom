@@ -73,11 +73,12 @@ export const STARTING_RESOURCES = {
   [ResourceType.FISH]: 1000
 };
 
-export const STARTING_STORAGE_CAPACITY = {
-  [ResourceType.WOOD]: 5000,
-  [ResourceType.STONE]: 5000,
-  [ResourceType.IRON]: 3000,
-  [ResourceType.GOLD]: 2000,
-  [ResourceType.FOOD]: 4000,
-  [ResourceType.FISH]: 4000
+// Basis-Lagerkapazität (Hauptstadt / ohne zusätzliche Lager)
+export const BASE_STORAGE_CAPACITY = {
+  [ResourceType.WOOD]: 500,
+  [ResourceType.STONE]: 500,
+  [ResourceType.IRON]: 300,
+  [ResourceType.GOLD]: 200,
+  [ResourceType.FOOD]: 400,
+  [ResourceType.FISH]: 400
 };

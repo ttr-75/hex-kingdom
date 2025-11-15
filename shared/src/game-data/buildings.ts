@@ -46,7 +46,13 @@ export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
     baseCost: { wood: 60, stone: 40 },
     constructionTime: 50,
     maxLevel: 10,
-    upgradeMultiplier: 1.3
+    upgradeMultiplier: 1.3,
+    storageCapacity: {
+      wood: 1000,
+      stone: 1000,
+      iron: 500,
+      gold: 300
+    }
   },
   [BuildingType.MARKETPLACE]: {
     type: BuildingType.MARKETPLACE,
@@ -97,7 +103,11 @@ export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
     baseCost: { wood: 70, stone: 50, food: 30 },
     constructionTime: 80,
     maxLevel: 5,
-    upgradeMultiplier: 1.4
+    upgradeMultiplier: 1.4,
+    storageCapacity: {
+      food: 2000,
+      fish: 2000
+    }
   },
   [BuildingType.WELL]: {
     type: BuildingType.WELL,

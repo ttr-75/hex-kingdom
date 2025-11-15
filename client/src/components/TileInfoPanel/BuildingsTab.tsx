@@ -1,6 +1,8 @@
 import { BuildingType, UnitType, ResourceType, RESOURCE_DEFINITIONS } from '@hex-kingdom/shared';
 import { BuildingState, PlayerState } from '../../types/room-state';
 import { UNIT_DEFINITIONS, BUILDING_DEFINITIONS } from '@hex-kingdom/shared/src/game-data';
+import { useState } from 'react';
+import BuildingDetailPanel from './BuildingDetailPanel';
 
 interface BuildingsTabProps {
   buildings: BuildingState[];
@@ -21,6 +23,7 @@ export default function BuildingsTab({
   showBuildMenu,
   setShowBuildMenu
 }: BuildingsTabProps) {
+  const [selectedBuilding, setSelectedBuilding] = useState<BuildingState | null>(null);
 
   const canAfford = (buildingType: BuildingType): boolean => {
     if (!currentPlayer) {
@@ -44,102 +47,33 @@ export default function BuildingsTab({
 
   return (
     <>
-      {/* Gebäude-Liste */}
+      {/* Gebäude-Liste - Kompakte Darstellung */}
       {buildings.length > 0 ? (
-        buildings.map((building, index) => {
-          const isOwnedByPlayer = building.owner === currentPlayer?.username;
-          
-          return (
-            <div key={building.id} className="info-section buildings-section">
-              <h4>🏰 Gebäude {buildings.length > 1 ? `#${index + 1}` : ''}</h4>
-              <div className="building-card">
-                <div className="building-header">
-                  <span className="building-type">
-                    {BUILDING_DEFINITIONS[building.type as BuildingType]?.icon} {BUILDING_DEFINITIONS[building.type as BuildingType]?.name || building.type}
-                  </span>
-                  <span className="building-level-badge">Lv. {building.level}</span>
+        <div className="info-section buildings-section">
+          <h4>🏰 Gebäude ({buildings.length})</h4>
+          <div className="buildings-compact-list">
+            {buildings.map((building) => {
+              const buildingDef = BUILDING_DEFINITIONS[building.type as BuildingType];
+              const isConstructing = building.constructionProgress < 1;
+              
+              return (
+                <div 
+                  key={building.id} 
+                  className="building-compact-item"
+                  onClick={() => setSelectedBuilding(building)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <span className="building-compact-icon">{buildingDef?.icon}</span>
+                  <span className="building-compact-name">{buildingDef?.name || building.type}</span>
+                  <span className="building-compact-level">Lv. {building.level}</span>
+                  {isConstructing && (
+                    <span className="building-compact-progress">🔨 {(building.constructionProgress * 100).toFixed(0)}%</span>
+                  )}
                 </div>
-                <div className="building-owner">
-                  <span className="owner-label">Besitzer:</span>
-                  <span className={`owner-name ${building.owner === currentPlayer?.username ? 'is-player' : ''}`}>
-                    {building.owner === currentPlayer?.username ? '👤 Du' : `👤 ${building.owner}`}
-                  </span>
-                </div>
-                {building.constructionProgress < 1 ? (
-                  <div className="construction-progress">
-                    <p className="progress-label">🔨 Baufortschritt</p>
-                    <div className="progress-bar">
-                      <div 
-                        className="progress-fill" 
-                        style={{ width: `${building.constructionProgress * 100}%` }}
-                      />
-                    </div>
-                    <p className="progress-text">
-                      {(building.constructionProgress * 100).toFixed(0)}% abgeschlossen
-                    </p>
-                  </div>
-                ) : (
-                  <div className="building-status-complete">
-                    <p>✅ Gebäude fertiggestellt</p>
-                  </div>
-                )}
-                
-                {/* Unit Recruitment - Show if building is a completed barracks owned by player */}
-                {building.type === BuildingType.BARRACKS && 
-                 building.constructionProgress >= 1 && 
-                 building.owner === currentPlayer?.username && (
-                  <div className="recruit-section">
-                    <h5>⚔️ Einheiten rekrutieren</h5>
-                    <div className="recruit-menu">
-                      <button
-                        className="recruit-button"
-                        onClick={() => onRecruitUnit?.(UnitType.SCOUT, building.id)}
-                        disabled={!currentPlayer || 
-                          (UNIT_DEFINITIONS[UnitType.SCOUT].cost.wood ?? 0) > currentPlayer.wood ||
-                          (UNIT_DEFINITIONS[UnitType.SCOUT].cost.food ?? 0) > currentPlayer.food ||
-                          (UNIT_DEFINITIONS[UnitType.SCOUT].cost.gold ?? 0) > currentPlayer.gold}
-                      >
-                        <div className="recruit-button-content">
-                          <span className="recruit-button-icon">👁</span>
-                          <span className="recruit-button-name">
-                            {UNIT_DEFINITIONS[UnitType.SCOUT].name}
-                          </span>
-                          <span className="recruit-button-cost">
-                            {UNIT_DEFINITIONS[UnitType.SCOUT].cost.wood && (
-                              <span className={`cost-item ${currentPlayer && UNIT_DEFINITIONS[UnitType.SCOUT].cost.wood > currentPlayer.wood ? 'insufficient' : ''}`}>
-                                {RESOURCE_DEFINITIONS[ResourceType.WOOD].icon} {UNIT_DEFINITIONS[UnitType.SCOUT].cost.wood}
-                              </span>
-                            )}
-                            {UNIT_DEFINITIONS[UnitType.SCOUT].cost.food && (
-                              <span className={`cost-item ${currentPlayer && UNIT_DEFINITIONS[UnitType.SCOUT].cost.food > currentPlayer.food ? 'insufficient' : ''}`}>
-                                {RESOURCE_DEFINITIONS[ResourceType.FOOD].icon} {UNIT_DEFINITIONS[UnitType.SCOUT].cost.food}
-                              </span>
-                            )}
-                            {UNIT_DEFINITIONS[UnitType.SCOUT].cost.gold && (
-                              <span className={`cost-item ${currentPlayer && UNIT_DEFINITIONS[UnitType.SCOUT].cost.gold > currentPlayer.gold ? 'insufficient' : ''}`}>
-                                {RESOURCE_DEFINITIONS[ResourceType.GOLD].icon} {UNIT_DEFINITIONS[UnitType.SCOUT].cost.gold}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Gebäude upgrade Option */}
-                {isOwnedByPlayer && building.constructionProgress >= 1 && (
-                  <div className="building-actions">
-                    <button className="action-button upgrade-action">
-                      <span className="action-icon">⬆️</span>
-                      <span className="action-label">Upgrade auf Level {building.level + 1}</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })
+              );
+            })}
+          </div>
+        </div>
       ) : (
         <div className="info-section">
           <p className="info-message">Keine Gebäude auf diesem Feld</p>
@@ -212,6 +146,16 @@ export default function BuildingsTab({
             </div>
           </div>
         </>
+      )}
+
+      {/* Building Detail Panel */}
+      {selectedBuilding && (
+        <BuildingDetailPanel
+          building={selectedBuilding}
+          currentPlayer={currentPlayer}
+          onClose={() => setSelectedBuilding(null)}
+          onRecruitUnit={onRecruitUnit}
+        />
       )}
     </>
   );

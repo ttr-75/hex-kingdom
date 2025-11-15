@@ -17,7 +17,8 @@ export class BuildingHandler {
     private postgres: PostgresManager,
     private productionSystem: ProductionSystem,
     private getPlayerByClient: (client: Client) => PlayerState | undefined,
-    private biomeConversionSystem?: BiomeConversionSystem
+    private biomeConversionSystem?: BiomeConversionSystem,
+    private calculateStorageCapacity?: (player: PlayerState) => void
   ) {}
 
   async handleBuild(client: Client, command: BuildCommand): Promise<void> {
@@ -178,6 +179,14 @@ export class BuildingHandler {
           this.productionSystem.saveProductionState(building.owner).catch(err => {
             console.error('Failed to save production state after building completion:', err);
           });
+          
+          // Recalculate storage capacity for owner
+          if (this.calculateStorageCapacity) {
+            const owner = this.state.players.get(building.owner);
+            if (owner) {
+              this.calculateStorageCapacity(owner);
+            }
+          }
           
           // Prüfe ob Tile zu Settlement konvertiert werden kann
           if (this.biomeConversionSystem) {

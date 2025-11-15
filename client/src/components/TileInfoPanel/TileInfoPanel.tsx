@@ -50,14 +50,111 @@ export default function TileInfoPanel({
   const [showBuildMenu, setShowBuildMenu] = useState(false);
   
   if (!selectedHex) {
+    // Zähle eigene Tiles
+    const ownedTilesCount = Array.from(units.values()).filter(
+      unit => unit.owner === currentPlayer?.username
+    ).length;
+
+    // Zähle eigene Gebäude
+    const ownedBuildings = buildings.filter(
+      building => building.owner === currentPlayer?.username
+    );
+    const buildingsCount = ownedBuildings.length;
+
+    // Zähle Gebäude nach Typ
+    const buildingsByType: Record<string, number> = {};
+    ownedBuildings.forEach(building => {
+      buildingsByType[building.type] = (buildingsByType[building.type] || 0) + 1;
+    });
+
+    // Zähle eigene Einheiten
+    const ownedUnits = Array.from(units.values()).filter(
+      unit => unit.owner === currentPlayer?.username
+    );
+    const unitsCount = ownedUnits.length;
+
     return (
       <div className="tile-info-panel empty">
         <button className="tile-panel-close" onClick={onClose}>✕</button>
         <div className="panel-header">
-          <h3>📍 Tile-Info</h3>
+          <h3>👑 {currentPlayer?.username || 'Dein Königreich'}</h3>
         </div>
         <div className="panel-content">
-          <p className="empty-message">Klicke auf ein Tile, um Details anzuzeigen</p>
+          {!currentPlayer ? (
+            <p className="empty-message">⏳ Lade Königreichsdaten...</p>
+          ) : (
+            <>
+              <div className="info-section">
+                <h4>💰 Ressourcen</h4>
+                <div className="kingdom-resources">
+                  <div className="resource-item">
+                    <span className="resource-icon">🪵</span>
+                    <span className="resource-name">Holz</span>
+                    <span className="resource-value">{Math.round(currentPlayer.wood)} / {Math.round(currentPlayer.storageWood)}</span>
+                  </div>
+                  <div className="resource-item">
+                    <span className="resource-icon">🪨</span>
+                    <span className="resource-name">Stein</span>
+                    <span className="resource-value">{Math.round(currentPlayer.stone)} / {Math.round(currentPlayer.storageStone)}</span>
+                  </div>
+                  <div className="resource-item">
+                    <span className="resource-icon">⚔️</span>
+                    <span className="resource-name">Eisen</span>
+                    <span className="resource-value">{Math.round(currentPlayer.iron)} / {Math.round(currentPlayer.storageIron)}</span>
+                  </div>
+                  <div className="resource-item">
+                    <span className="resource-icon">🪙</span>
+                    <span className="resource-name">Gold</span>
+                    <span className="resource-value">{Math.round(currentPlayer.gold)} / {Math.round(currentPlayer.storageGold)}</span>
+                  </div>
+                  <div className="resource-item">
+                    <span className="resource-icon">🌾</span>
+                    <span className="resource-name">Nahrung</span>
+                    <span className="resource-value">{Math.round(currentPlayer.food)} / {Math.round(currentPlayer.storageFood)}</span>
+                  </div>
+                  <div className="resource-item">
+                    <span className="resource-icon">🐟</span>
+                    <span className="resource-name">Fisch</span>
+                    <span className="resource-value">{Math.round(currentPlayer.fish)} / {Math.round(currentPlayer.storageFish)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="info-section">
+                <h4>🏰 Gebäude ({buildingsCount})</h4>
+                {buildingsCount > 0 ? (
+                  <div className="kingdom-stats">
+                    {Object.entries(buildingsByType).map(([type, count]) => (
+                      <p key={type}>
+                        <strong>{type}:</strong> {count}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p>Noch keine Gebäude gebaut.</p>
+                )}
+              </div>
+
+              <div className="info-section">
+                <h4>🗡️ Einheiten ({unitsCount})</h4>
+                {unitsCount > 0 ? (
+                  <p>Du hast {unitsCount} Einheit{unitsCount !== 1 ? 'en' : ''} unter deinem Kommando.</p>
+                ) : (
+                  <p>Noch keine Einheiten rekrutiert.</p>
+                )}
+              </div>
+
+              <div className="info-section">
+                <h4>📊 Statistiken</h4>
+                <div className="kingdom-stats">
+                  <p><strong>Farbe:</strong> <span style={{ color: currentPlayer.color }}>⬤</span> {currentPlayer.color}</p>
+                  <p><strong>Spieler ID:</strong> {currentPlayer.id}</p>
+                </div>
+              </div>
+
+              <p className="kingdom-hint">💡 Klicke auf ein Tile, um Details anzuzeigen</p>
+            </>
+          )}
         </div>
       </div>
     );
