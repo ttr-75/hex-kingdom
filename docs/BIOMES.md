@@ -208,6 +208,37 @@ Definiert welche Ressourcen mit welcher Wahrscheinlichkeit und Menge spawnen kö
 
 ---
 
+### 🏘️ Siedlung (Settlement)
+**Charakteristik:** Entwickeltes Gebiet mit Bevölkerung und Infrastruktur - entsteht durch Spieleraktivität
+
+| Eigenschaft | Wert |
+|-------------|------|
+| Sichtweite | 3 Hex-Felder |
+| Bewegung | 1.3× (30% schneller - Straßen) |
+| Fruchtbarkeit | 0.8 - 1.0 (bewirtschaftet) |
+| Farbe | #974430 |
+
+**Ressourcen:**
+- Keine natürlichen Ressourcen (urbanes Gebiet)
+
+**Bevölkerung:**
+- Immer 10-25 Einwohner bei Entstehung
+
+**Besonderheit:** 
+- Kann NICHT während der Weltgenerierung spawnen
+- Entsteht nur durch Spieler-Entwicklung eines Tiles
+- **Konvertierungskriterien:**
+  - Mindestens 5 Einwohner auf dem Tile
+  - Mindestens 3 Gebäude
+  - Mindestens 1 Wohngebäude (Residence)
+
+**Vorteile:**
+- Schnellere Bewegung durch ausgebaute Infrastruktur
+- Sehr hohe Fruchtbarkeit für Farmen
+- Zeigt entwickelte Gebiete auf der Karte
+
+---
+
 ## Wasser-System
 
 Das Spiel unterscheidet zwischen drei Arten von Wasser:
@@ -246,14 +277,22 @@ Seen spawnen an niedrigen Punkten (Elevation < 0.3) im Inland:
 - **Nahrung**: Grasland > Laubwald
 
 **🚶 Schnelle Truppenbewegung:**
+- **Siedlung**: +30% Geschwindigkeit (beste)
 - **Grasland**: +20% Geschwindigkeit
 - **Steppe**: +10% Geschwindigkeit
 - ❌ **Meiden**: Gebirge (-50%), Sumpf (-40%)
 
 **🌾 Nahrungsproduktion:**
-- **Grasland**: 0.7-0.9 Fruchtbarkeit (beste)
+- **Siedlung**: 0.8-1.0 Fruchtbarkeit (beste)
+- **Grasland**: 0.7-0.9 Fruchtbarkeit
 - **Laubwald**: 0.6-0.8 Fruchtbarkeit
 - ❌ **Ungeeignet**: Wüste, Gebirge
+
+**🏘️ Siedlungsentwicklung:**
+- Baue Wohngebäude (Residence) + weitere Gebäude auf einem Tile
+- Warte bis mindestens 5 Einwohner dort leben
+- Das Tile wird automatisch zu einer Siedlung konvertiert
+- Profitiere von besserer Infrastruktur und Bewegungsgeschwindigkeit
 
 ---
 

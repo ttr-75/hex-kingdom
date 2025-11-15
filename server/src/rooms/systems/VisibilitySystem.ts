@@ -40,20 +40,24 @@ export class VisibilitySystem {
     const line = hexLine(observerPos, targetPos);
     let remainingVision = baseVisionRange;
     
+    // Prüfe alle Tiles auf dem Weg (außer Start und Ziel)
     for (let i = 1; i < line.length - 1; i++) {
       const checkTile = this.state.tiles.get(hexToKey(line[i]));
       if (checkTile) {
         const biomeViewDistance = this.getBiomeViewDistance(checkTile.biome);
+        // Je niedriger viewDistance, desto höher die Kosten
         const visionCost = Math.max(0, 5 - biomeViewDistance);
         remainingVision -= visionCost * 0.3;
         
-        if (remainingVision < i) {
+        // Wenn die Sicht aufgebraucht ist, können wir nicht weitersehen
+        if (remainingVision <= 0) {
           return false;
         }
       }
     }
     
-    return remainingVision >= distance;
+    // Prüfe ob genug Sicht übrig ist, um das Ziel zu erreichen
+    return remainingVision >= 0.5; // Kleine Toleranz
   }
 
   async updatePlayerVisibility(playerUsername: string): Promise<void> {

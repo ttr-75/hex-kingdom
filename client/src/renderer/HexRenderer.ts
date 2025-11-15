@@ -1,44 +1,18 @@
 import * as PIXI from 'pixi.js';
-import { HexCoord, hexToPixel, pixelToHex, UnitType } from '@hex-kingdom/shared';
+import { 
+  HexCoord, 
+  hexToPixel, 
+  pixelToHex, 
+  UnitType,
+  BiomeType,
+  ResourceType,
+  BIOME_COLORS,
+  BIOME_SHADOWS,
+  RESOURCE_COLORS
+} from '@hex-kingdom/shared';
 import { HexTileState, BuildingState } from '../types/room-state';
 
 const HEX_SIZE = 40;
-
-// Biome-Farben (basierend auf den definierten Biomen)
-const BIOME_COLORS: Record<string, number> = {
-  deciduous_forest: 0x4a7c3f,   // Laubwald - grün
-  coniferous_forest: 0x2d5a2d,  // Nadelwald - dunkelgrün
-  grassland: 0x7cb342,          // Grasland - hellgrün
-  hills: 0x8d6e63,              // Hügel - braun
-  mountains: 0x616161,          // Gebirge - grau
-  swamp: 0x5d4e37,              // Sumpf - dunkelbraun
-  steppe: 0xc5a777,             // Steppe - beige
-  desert: 0xe4a672,             // Wüste - sand
-  ocean: 0x1565c0,              // Ozean - tiefblau
-  lake: 0x42a5f5,               // See - blau
-  river: 0x64b5f6               // Fluss - hellblau
-};
-
-const BIOME_SHADOWS: Record<string, number> = {
-  deciduous_forest: 0x3a6c2f,
-  coniferous_forest: 0x1d4a1d,
-  grassland: 0x6ca332,
-  hills: 0x7d5e53,
-  mountains: 0x515151,
-  swamp: 0x4d3e27,
-  steppe: 0xb59767,
-  desert: 0xd49662,
-  ocean: 0x0d4d9d,
-  lake: 0x3295e5,
-  river: 0x54a5e6
-};
-
-const RESOURCE_COLORS: Record<string, number> = {
-  wood: 0x8B4513,
-  stone: 0x696969,
-  iron: 0xC0C0C0,
-  gold: 0xFFD700
-};
 
 export class HexRenderer {
   private app: PIXI.Application;
@@ -407,8 +381,8 @@ export class HexRenderer {
       
       // Verwende Biome-System
       const biome = tile.biome || 'grassland';  // Default fallback
-      let color = BIOME_COLORS[biome] || BIOME_COLORS.grassland;
-      const shadowColor = BIOME_SHADOWS[biome] || BIOME_SHADOWS.grassland;
+      let color = BIOME_COLORS[biome as BiomeType] || BIOME_COLORS[BiomeType.GRASSLAND];
+      const shadowColor = BIOME_SHADOWS[biome as BiomeType] || BIOME_SHADOWS[BiomeType.GRASSLAND];
       
       // Check if this is an explored-only tile (has biome but no owner/resources data)
       // Explored tiles from server have only: key, q, r, biome (no owner, no resources)
@@ -449,7 +423,7 @@ export class HexRenderer {
       if (!isExploredOnly && tile.resources && tile.resources.length > 0) {
         // Show first resource as indicator
         const firstResource = tile.resources[0];
-        const resourceColor = RESOURCE_COLORS[firstResource.type] || 0xFFFFFF;
+        const resourceColor = RESOURCE_COLORS[firstResource.type as ResourceType] || 0xFFFFFF;
         const dot = new PIXI.Graphics();
         dot.circle(pixel.x, pixel.y, 8);
         dot.fill(resourceColor);

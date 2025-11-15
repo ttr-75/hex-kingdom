@@ -129,7 +129,19 @@ export class TileDataManager {
       const staticData: {
         resources?: Array<{ type: string; amount: number }>;
         population?: number;
+        biome?: string;
+        fertility?: number;
       } = {};
+      
+      // Biom aus MongoDB
+      if (tileFromMongo.biome) {
+        staticData.biome = tileFromMongo.biome;
+      }
+      
+      // Fruchtbarkeit aus MongoDB
+      if (tileFromMongo.fertility !== undefined) {
+        staticData.fertility = tileFromMongo.fertility;
+      }
       
       // Resources aus MongoDB (falls vorhanden)
       if (tileFromMongo.resources && tileFromMongo.resources.length > 0) {

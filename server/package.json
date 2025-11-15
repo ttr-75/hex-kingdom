@@ -21,6 +21,9 @@
     "full-reset": "tsx src/scripts/fullReset.ts",
     "migration:multiple-buildings": "tsx src/scripts/migrateMultipleBuildings.ts",
     "migrate:tile-resources": "tsx src/scripts/migrateTileResources.ts",
+    "migrate:add-biome-column": "tsx src/scripts/addBiomeColumnToTileOwnership.ts",
+    "sync:biomes": "tsx src/scripts/syncBiomesFromPostgresToMongo.ts",
+    "check:biome-conversion": "tsx src/scripts/checkBiomeConversion.ts",
     "init:production-states": "tsx src/scripts/initializeProductionStates.ts",
     "check:tables": "tsx src/scripts/checkTables.ts"
   },

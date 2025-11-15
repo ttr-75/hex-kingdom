@@ -1,4 +1,4 @@
-import { BiomeType, BiomeDefinition, ResourceType } from '../types';
+import { BiomeType, BiomeDefinition, ResourceType, BuildingType } from '../types';
 
 // ===========================
 // BIOME DEFINITIONS
@@ -28,7 +28,8 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
       probability: { min: 0.05, max: 0.15 }, // 5-15% Wahrscheinlichkeit
       amount: { min: 1, max: 3 }              // 1-3 Einwohner
     },
-    color: '#4a7c3f'
+    color: '#4a7c3f',
+    shadowColor: '#3a5f2f'
   },
 
   [BiomeType.CONIFEROUS_FOREST]: {
@@ -54,7 +55,8 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
       probability: { min: 0.02, max: 0.08 }, // 2-8% Wahrscheinlichkeit
       amount: { min: 1, max: 2 }              // 1-2 Einwohner
     },
-    color: '#2d5a2d'
+    color: '#2d5a2d',
+    shadowColor: '#1d3f1d'
   },
 
   [BiomeType.GRASSLAND]: {
@@ -81,7 +83,8 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
       // % Wahrscheinlichkeit
       amount: { min: 2, max: 10 }            // 2-10 Einwohner
     },
-    color: '#7cb342'
+    color: '#7cb342',
+    shadowColor: '#689f38'
   },
 
   [BiomeType.HILLS]: {
@@ -108,7 +111,8 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
         amount: { min: 200, max: 400 }
       }
     ],
-    color: '#8d6e63'
+    color: '#8d6e63',
+    shadowColor: '#6d5353'
   },
 
   [BiomeType.MOUNTAINS]: {
@@ -135,7 +139,8 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
         amount: { min: 300, max: 600 }
       }
     ],
-    color: '#616161'
+    color: '#616161',
+    shadowColor: '#424242'
   },
 
   [BiomeType.SWAMP]: {
@@ -162,7 +167,8 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
         amount: { min: 200, max: 400 }
       }
     ],
-    color: '#5d4e37'
+    color: '#5d4e37',
+    shadowColor: '#4a3a27'
   },
 
   [BiomeType.STEPPE]: {
@@ -188,7 +194,8 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
       probability: { min: 0.01, max: 0.05 }, // 1-5% Wahrscheinlichkeit
       amount: { min: 1, max: 2 }              // 1-2 Einwohner
     },
-    color: '#c5a777'
+    color: '#c5a777',
+    shadowColor: '#a58757'
   },
 
   [BiomeType.DESERT]: {
@@ -210,7 +217,8 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
         amount: { min: 300, max: 500 }
       }
     ],
-    color: '#e4a672'
+    color: '#e4a672',
+    shadowColor: '#c48652'
   },
 
   [BiomeType.OCEAN]: {
@@ -227,7 +235,8 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
         amount: { min: 400, max: 800 }
       }
     ],
-    color: '#1565c0'
+    color: '#1565c0',
+    shadowColor: '#0d47a1'
   },
 
   [BiomeType.LAKE]: {
@@ -244,7 +253,8 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
         amount: { min: 300, max: 600 }
       }
     ],
-    color: '#42a5f5'
+    color: '#42a5f5',
+    shadowColor: '#1e88e5'
   },
 
   [BiomeType.RIVER]: {
@@ -261,6 +271,29 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
         amount: { min: 200, max: 500 }
       }
     ],
-    color: '#64b5f6'
+    color: '#64b5f6',
+    shadowColor: '#42a5f5'
+  },
+
+  [BiomeType.SETTLEMENT]: {
+    type: BiomeType.SETTLEMENT,
+    name: 'Siedlung',
+    description: 'Entwickeltes Gebiet mit Bevölkerung und Infrastruktur',
+    viewDistance: 3,          // Gute Sichtweite (gut erschlossen)
+    movementMultiplier: 2.0,  // Schneller (ausgebaute Straßen)
+    fertility: { min: 0.0, max: 0.0 }, // Keine Fruchtbarkeit mehr
+    resourceSpawns: [],       // Keine natürlichen Ressourcen (urbanes Gebiet)
+    populationSpawn: {
+      probability: { min: 1.0, max: 1.0 }, // 100% - Siedlungen haben immer Bevölkerung
+      amount: { min: 10, max: 25 }         // 10-25 Einwohner initial
+    },
+    canSpawnNaturally: false, // Kann NICHT während Weltgenerierung spawnen
+    conversionCriteria: {
+      minPopulation: 5,       // Mindestens 5 Einwohner
+      minBuildings: 3,        // Mindestens 3 Gebäude
+      requiredBuildingTypes: [BuildingType.RESIDENCE] // Mindestens ein Wohngebäude
+    },
+    color: '#974430',         // Braun-beige für Siedlungen
+    shadowColor: '#773420'    // Dunkleres Braun für Schatten
   }
 };

@@ -107,6 +107,29 @@ export class ChunkManager {
     return tile || null;
   }
 
+  /**
+   * Update das Biom eines einzelnen Tiles in MongoDB
+   * Wird verwendet wenn ein Tile zu einem Settlement konvertiert wird
+   */
+  async updateTileBiome(q: number, r: number, newBiome: BiomeType): Promise<void> {
+    const { chunkX, chunkY } = this.getChunkCoords(q, r);
+    const chunkId = this.getChunkId(chunkX, chunkY);
+    
+    await this.chunks.updateOne(
+      { 
+        _id: chunkId,
+        'tiles.q': q,
+        'tiles.r': r
+      },
+      { 
+        $set: { 
+          'tiles.$.biome': newBiome,
+          lastModified: new Date()
+        } 
+      }
+    );
+  }
+
   // Konvertiere HexTileState Map zu ChunkData
   tilesToChunkData(tiles: Map<string, HexTileState>): Map<string, ChunkData> {
     const chunksMap = new Map<string, ChunkData>();

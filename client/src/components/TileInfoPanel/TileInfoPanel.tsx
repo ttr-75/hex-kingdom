@@ -30,7 +30,8 @@ const BIOME_NAMES: Record<string, string> = {
   desert: '🏜️ Wüste',
   ocean: '🌊 Ozean',
   lake: '🏞️ See',
-  river: '〰️ Fluss'
+  river: '〰️ Fluss',
+  settlement: '🏘️ Siedlung'
 };
 
 export default function TileInfoPanel({

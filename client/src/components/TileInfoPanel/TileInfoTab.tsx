@@ -1,18 +1,15 @@
 import { HexTileState, PlayerState } from '../../types/room-state';
+import { RESOURCE_DEFINITIONS } from '@hex-kingdom/shared';
 
 interface TileInfoTabProps {
   tile: HexTileState | undefined;
   currentPlayer: PlayerState | null;
 }
 
-const RESOURCE_NAMES: Record<string, string> = {
-  wood: '🪵 Holz',
-  stone: '🪨 Stein',
-  iron: '⚔️ Eisen',
-  gold: '💰 Gold',
-  food: '🌾 Nahrung',
-  fish: '🐟 Fisch'
-};
+const RESOURCE_NAMES: Record<string, string> = Object.entries(RESOURCE_DEFINITIONS).reduce((acc, [key, def]) => {
+  acc[key] = `${def.icon} ${def.name}`;
+  return acc;
+}, {} as Record<string, string>);
 
 export default function TileInfoTab({ tile, currentPlayer }: TileInfoTabProps) {
   const isOwnedByPlayer = tile?.owner === currentPlayer?.username;

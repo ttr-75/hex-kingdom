@@ -27,6 +27,7 @@ import { MovementSystem } from './systems/MovementSystem.js';
 import { VisibilitySystem } from './systems/VisibilitySystem.js';
 import { ExplorationSystem } from './systems/ExplorationSystem.js';
 import { ProductionSystem } from './systems/ProductionSystem.js';
+import { BiomeConversionSystem } from './systems/BiomeConversionSystem.js';
 
 // Handlers
 import { UnitHandler } from './handlers/UnitHandler.js';
@@ -71,6 +72,7 @@ export class GameRoom extends Room<GameRoomState> {
   private visibilitySystem!: VisibilitySystem;
   private explorationSystem!: ExplorationSystem;
   private productionSystem!: ProductionSystem;
+  private biomeConversionSystem!: BiomeConversionSystem;
   
   // Handlers
   private unitHandler!: UnitHandler;
@@ -126,6 +128,11 @@ export class GameRoom extends Room<GameRoomState> {
       (player) => this.visibilitySystem.updatePlayerVisibility(player)
     );
     this.productionSystem = new ProductionSystem(this.state, this.postgres);
+    this.biomeConversionSystem = new BiomeConversionSystem(
+      this.state,
+      this.postgres,
+      (playerUsername) => this.visibilitySystem.updatePlayerVisibility(playerUsername)
+    );
     
     // Initialize Handlers
     this.unitHandler = new UnitHandler(
@@ -139,7 +146,8 @@ export class GameRoom extends Room<GameRoomState> {
       this.state,
       this.postgres,
       this.productionSystem,
-      (client: Client) => this.getPlayerByClient(client)
+      (client: Client) => this.getPlayerByClient(client),
+      this.biomeConversionSystem
     );
     
     // Load initial world data from MongoDB
@@ -317,19 +325,38 @@ export class GameRoom extends Room<GameRoomState> {
     
     // Lade Territorium und Gebäude aus PostgreSQL
     let hasTerritory = false;
+    let existingTiles: Array<{ q: number; r: number }> = [];
     try {
-      const existingTiles = await this.postgres.getPlayerTiles(persistentId);
+      existingTiles = await this.postgres.getPlayerTiles(persistentId);
       hasTerritory = existingTiles.length > 0;
       
       if (hasTerritory) {
         console.log(`🏠 Spieler hat bereits ${existingTiles.length} Tiles`);
         
-        // Setze Owner im RAM für bereits existierende Tiles
+        // 🔧 FIX: Lade Chunks ZUERST, bevor wir owner setzen
+        const chunksToLoad = new Set<string>();
+        existingTiles.forEach(({ q, r }: { q: number; r: number }) => {
+          const { chunkX, chunkY } = this.chunkManager.getChunkCoords(q, r);
+          chunksToLoad.add(`${chunkX},${chunkY}`);
+        });
+        
+        const CHUNK_SIZE = 16;
+        const loadPromises = Array.from(chunksToLoad).map(key => {
+          const [chunkX, chunkY] = key.split(',').map(Number);
+          return this.loadChunkAsync(chunkX, chunkY, CHUNK_SIZE);
+        });
+        
+        await Promise.all(loadPromises);
+        console.log(`✅ ${chunksToLoad.size} Chunks für existierendes Territorium von ${persistentId} geladen`);
+        
+        // JETZT setze Owner im RAM (nachdem Chunks geladen sind)
         existingTiles.forEach(({ q, r }: { q: number; r: number }) => {
           const key = hexToKey({ q, r });
           const tile = this.state.tiles.get(key);
           if (tile) {
             tile.owner = persistentId;
+          } else {
+            console.warn(`⚠️ Tile (${q}, ${r}) nicht gefunden im State trotz Chunk-Loading`);
           }
         });
       }
@@ -418,14 +445,11 @@ export class GameRoom extends Room<GameRoomState> {
     let spawnPosition = { q: 0, r: 0 };
     if (!hasTerritory && !isAdmin) {
       spawnPosition = await this.assignStartingTerritory(persistentId, isAdmin); // Verwende username
-    } else if (hasTerritory) {
-      // Berechne Zentrum des existierenden Territoriums
-      const tiles = await this.postgres.getPlayerTiles(persistentId);
-      if (tiles.length > 0) {
-        const avgQ = tiles.reduce((sum: number, t: { q: number; r: number }) => sum + t.q, 0) / tiles.length;
-        const avgR = tiles.reduce((sum: number, t: { q: number; r: number }) => sum + t.r, 0) / tiles.length;
-        spawnPosition = { q: Math.round(avgQ), r: Math.round(avgR) };
-      }
+    } else if (hasTerritory && existingTiles.length > 0) {
+      // Berechne Zentrum des existierenden Territoriums (Chunks wurden bereits oben geladen)
+      const avgQ = existingTiles.reduce((sum: number, t: { q: number; r: number }) => sum + t.q, 0) / existingTiles.length;
+      const avgR = existingTiles.reduce((sum: number, t: { q: number; r: number }) => sum + t.r, 0) / existingTiles.length;
+      spawnPosition = { q: Math.round(avgQ), r: Math.round(avgR) };
     }
     
     // Sende Spawn-Position an Client für Kamera-Zentrierung
@@ -527,23 +551,32 @@ export class GameRoom extends Room<GameRoomState> {
         }
       });
       
-      // 3. Für jedes owned Tile: Berechne Sichtbarkeit basierend auf viewDistance
+      // 3. Für jedes owned Tile: Berechne Sichtbarkeit basierend auf viewDistance mit Line-of-Sight
       ownedTiles.forEach(owned => {
         // Hole viewDistance des Tiles aus BIOME_DEFINITIONS
         const biomeType = owned.biome as any;
         const biomeViewDistance = this.getBiomeViewDistance(biomeType);
         
-        // Mindestens direkte Nachbarn (distance = 1) sind immer sichtbar
-        const viewDistance = Math.max(1, biomeViewDistance);
+        // Berechne maximalen Suchradius (viewDistance + etwas Buffer für Sichtlinien-Berechnung)
+        const maxSearchRange = Math.max(biomeViewDistance + 2, 3); // Mindestens Distanz 3
         
-        // Berechne sichtbare Tiles im Radius
+        // Berechne sichtbare Tiles mit Line-of-Sight Check
         this.state.tiles.forEach((tile, key) => {
           const dq = tile.q - owned.q;
           const dr = tile.r - owned.r;
           const distance = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
           
-          if (distance <= viewDistance) {
-            visibleKeys.add(key);
+          // Prüfe nur Tiles im möglichen Sichtbereich
+          if (distance <= maxSearchRange) {
+            // Verwende canSeeTile für korrekte Line-of-Sight Prüfung
+            if (this.visibilitySystem.canSeeTile(
+              { q: owned.q, r: owned.r },
+              owned.biome,
+              0, // Kein visionBonus für normale Tiles
+              { q: tile.q, r: tile.r }
+            )) {
+              visibleKeys.add(key);
+            }
           }
         });
       });
@@ -800,6 +833,11 @@ export class GameRoom extends Room<GameRoomState> {
       console.error('❌ Error in updateMovements:', err);
     });
     
+    // Update Biom-Konvertierungen (z.B. Tiles zu Settlements) (async)
+    this.biomeConversionSystem.update().catch(err => {
+      console.error('❌ Error in biomeConversionSystem.update:', err);
+    });
+    
     // Entferne abgelaufene Handelsangebote
     this.cleanupExpiredTradeOffers();
   }
@@ -1009,16 +1047,32 @@ export class GameRoom extends Room<GameRoomState> {
         // Chunk aus DB laden
         const tiles = this.chunkManager.chunkDataToTiles([existingChunk]);
         
-        // Synchronisiere Population aus PostgreSQL für alle beanspruchten Tiles
+        // Synchronisiere Owner, Population UND Biome aus PostgreSQL für alle beanspruchten Tiles
         for (const [key, tile] of tiles) {
           this.state.tiles.set(key, tile);
           
-          // Wenn Tile bereits einen Owner hat, lade Population aus PostgreSQL
+          // Wenn Tile bereits einen Owner hat, lade dynamische Daten aus PostgreSQL
           const owner = await this.postgres.getTileOwner(tile.q, tile.r);
           if (owner) {
             tile.owner = owner;
+            
+            // Population aus PostgreSQL (überschreibt MongoDB)
             const population = await this.postgres.getTilePopulation(tile.q, tile.r);
             tile.population = population;
+            
+            // Biome aus PostgreSQL (überschreibt MongoDB falls gesetzt)
+            const biomeFromPostgres = await this.postgres.getTileBiome(tile.q, tile.r);
+            if (biomeFromPostgres) {
+              tile.biome = biomeFromPostgres;
+              console.log(`🔄 Tile (${tile.q}, ${tile.r}) biome synced from PostgreSQL: ${biomeFromPostgres}`);
+            }
+            
+            // Fruchtbarkeit aus PostgreSQL (überschreibt MongoDB falls gesetzt)
+            const fertilityFromPostgres = await this.postgres.getTileFertility(tile.q, tile.r);
+            if (fertilityFromPostgres !== null && typeof fertilityFromPostgres === 'number' && !isNaN(fertilityFromPostgres)) {
+              tile.fertility = fertilityFromPostgres;
+              console.log(`🔄 Tile (${tile.q}, ${tile.r}) fertility synced from PostgreSQL: ${fertilityFromPostgres.toFixed(2)}`);
+            }
           }
         }
         return;
@@ -1043,6 +1097,34 @@ export class GameRoom extends Room<GameRoomState> {
     }
     
     const { q: spawnQ, r: spawnR } = spawnPosition;
+    
+    // 🔧 FIX: Lade alle Chunks, die vom Territory benötigt werden, BEVOR wir Tiles markieren
+    const chunksToLoad = new Set<string>();
+    for (let dq = -config.startingTilesRadius; dq <= config.startingTilesRadius; dq++) {
+      for (let dr = -config.startingTilesRadius; dr <= config.startingTilesRadius; dr++) {
+        const ds = -dq - dr;
+        if (Math.abs(dq) <= config.startingTilesRadius && 
+            Math.abs(dr) <= config.startingTilesRadius && 
+            Math.abs(ds) <= config.startingTilesRadius) {
+          
+          const q = spawnQ + dq;
+          const r = spawnR + dr;
+          const { chunkX, chunkY } = this.chunkManager.getChunkCoords(q, r);
+          chunksToLoad.add(`${chunkX},${chunkY}`);
+        }
+      }
+    }
+    
+    // Lade alle benötigten Chunks
+    const CHUNK_SIZE = 16;
+    const loadPromises = Array.from(chunksToLoad).map(key => {
+      const [chunkX, chunkY] = key.split(',').map(Number);
+      return this.loadChunkAsync(chunkX, chunkY, CHUNK_SIZE);
+    });
+    
+    await Promise.all(loadPromises);
+    console.log(`✅ ${chunksToLoad.size} Chunks für Starting Territory geladen`);
+    
     const tilesToOwn: Array<{ q: number; r: number }> = [];
     
     // Markiere Hexfelder basierend auf Radius
@@ -1228,11 +1310,11 @@ export class GameRoom extends Room<GameRoomState> {
     // Für User: Filtere nur sichtbare Chunks
     let allowedCoords = message.chunkCoords;
     if (!config.canRequestAllChunks) {
-      allowedCoords = this.filterVisibleChunks(client.sessionId, message.chunkCoords, config.visionRadius);
+      allowedCoords = this.filterVisibleChunks(player.username, message.chunkCoords, config.visionRadius);
       
       const filtered = message.chunkCoords.length - allowedCoords.length;
       if (filtered > 0) {
-        console.log(`🔒 ${filtered} Chunks für User blockiert (Fog-of-War)`);
+        console.log(`🔒 ${filtered} Chunks für User ${player.username} blockiert (Fog-of-War)`);
       }
     }
     

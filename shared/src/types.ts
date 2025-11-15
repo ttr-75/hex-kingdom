@@ -39,6 +39,14 @@ export interface Resources {
   [ResourceType.FISH]: number;
 }
 
+export interface ResourceDefinition {
+  type: ResourceType;
+  name: string;
+  icon: string; // Emoji for UI
+  color: string; // Hex color for rendering
+  description?: string;
+}
+
 // ===========================
 // BUILDINGS
 // ===========================
@@ -241,7 +249,8 @@ export enum BiomeType {
   DESERT = 'desert',                       // Wüste
   OCEAN = 'ocean',                         // Ozean (tiefes Wasser)
   LAKE = 'lake',                           // See (flaches Wasser auf Land)
-  RIVER = 'river'                          // Fluss
+  RIVER = 'river',                         // Fluss
+  SETTLEMENT = 'settlement'                // Siedlung (durch Spieler entwickelt)
 }
 
 /**
@@ -280,8 +289,20 @@ export interface BiomeDefinition {
     amount: { min: number; max: number };      // Anzahl der Einwohner
   };
   
-  // Visuelle Eigenschaften (für später)
-  color?: string; // Hex color für Minimap
+  // Kann dieses Biom während der Weltgenerierung spawnen?
+  // Wenn false, kann es nur durch Spieler-Aktionen entstehen
+  canSpawnNaturally?: boolean;
+  
+  // Kriterien für die Konvertierung eines Tiles zu diesem Biom
+  conversionCriteria?: {
+    minPopulation?: number;       // Mindest-Einwohner auf dem Tile
+    minBuildings?: number;        // Mindest-Anzahl Gebäude
+    requiredBuildingTypes?: BuildingType[]; // Bestimmte Gebäude-Typen erforderlich
+  };
+  
+  // Visuelle Eigenschaften
+  color: string; // Hex color für Minimap und Rendering
+  shadowColor: string; // Dunklere Farbe für Schatten/Konturen
 }
 
 export interface ResourceNode {

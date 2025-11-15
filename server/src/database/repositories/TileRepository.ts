@@ -4,6 +4,7 @@ export interface TileOwnership {
   q: number;
   r: number;
   owner: string | null;
+  biome: string | null;
   last_modified: Date;
 }
 
@@ -43,11 +44,24 @@ export class TileRepository {
         q INTEGER NOT NULL,
         r INTEGER NOT NULL,
         owner VARCHAR(255),
+        biome VARCHAR(50),
+        fertility NUMERIC(3,2),
         last_modified TIMESTAMP DEFAULT NOW(),
         PRIMARY KEY (q, r),
         CONSTRAINT fk_tile_owner FOREIGN KEY (owner) 
           REFERENCES players(username) ON DELETE SET NULL
       )
+    `);
+    
+    // Add biome and fertility columns to existing tables (migration)
+    await client.query(`
+      ALTER TABLE tile_ownership 
+      ADD COLUMN IF NOT EXISTS biome VARCHAR(50)
+    `);
+    
+    await client.query(`
+      ALTER TABLE tile_ownership 
+      ADD COLUMN IF NOT EXISTS fertility NUMERIC(3,2)
     `);
 
     // Tile Exploration Table (Fog of War)
@@ -128,6 +142,8 @@ export class TileRepository {
     staticData?: {
       resources?: Array<{ type: string; amount: number }>;
       population?: number;
+      biome?: string;
+      fertility?: number;
     }
   ): Promise<void> {
     const client = await this.pool.connect();
@@ -145,13 +161,13 @@ export class TileRepository {
         throw new Error(`Tile (${q},${r}) gehört bereits ${existingOwner.rows[0].owner}`);
       }
       
-      // 2. Setze Owner
+      // 2. Setze Owner, Biom und Fruchtbarkeit
       await client.query(
-        `INSERT INTO tile_ownership (q, r, owner, last_modified)
-         VALUES ($1, $2, $3, NOW())
+        `INSERT INTO tile_ownership (q, r, owner, biome, fertility, last_modified)
+         VALUES ($1, $2, $3, $4, $5, NOW())
          ON CONFLICT (q, r) DO UPDATE 
-         SET owner = $3, last_modified = NOW()`,
-        [q, r, owner]
+         SET owner = $3, biome = $4, fertility = $5, last_modified = NOW()`,
+        [q, r, owner, staticData?.biome || null, staticData?.fertility || null]
       );
       
       // 3. Migriere Resources (falls vorhanden)
@@ -508,5 +524,79 @@ export class TileRepository {
       [owner]
     );
     return parseInt(result.rows[0].total);
+  }
+
+  // ===========================
+  // TILE BIOME (DYNAMISCH)
+  // ===========================
+
+  /**
+   * Setze/Update Biom für ein Tile (UPSERT)
+   */
+  async setTileBiome(q: number, r: number, biome: string): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO tile_ownership (q, r, biome, last_modified)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (q, r) DO UPDATE 
+       SET biome = $3, last_modified = NOW()`,
+      [q, r, biome]
+    );
+  }
+
+  /**
+   * Hole Biom eines Tiles
+   */
+  async getTileBiome(q: number, r: number): Promise<string | null> {
+    const result = await this.pool.query<{ biome: string | null }>(
+      'SELECT biome FROM tile_ownership WHERE q = $1 AND r = $2',
+      [q, r]
+    );
+    return result.rows[0]?.biome || null;
+  }
+
+  /**
+   * Hole alle Tiles mit einem bestimmten Biom für einen Spieler
+   */
+  async getPlayerTilesByBiome(owner: string, biome: string): Promise<Array<{ q: number; r: number }>> {
+    const result = await this.pool.query<{ q: number; r: number }>(
+      'SELECT q, r FROM tile_ownership WHERE owner = $1 AND biome = $2',
+      [owner, biome]
+    );
+    return result.rows;
+  }
+
+  /**
+   * Hole alle Tiles die ein Biom gesetzt haben (für Sync-Zwecke)
+   */
+  async getAllTilesWithBiome(): Promise<Array<{ q: number; r: number; biome: string }>> {
+    const result = await this.pool.query<{ q: number; r: number; biome: string }>(
+      'SELECT q, r, biome FROM tile_ownership WHERE biome IS NOT NULL'
+    );
+    return result.rows;
+  }
+
+  /**
+   * Setze Fruchtbarkeit eines Tiles
+   */
+  async setTileFertility(q: number, r: number, fertility: number): Promise<void> {
+    await this.pool.query(
+      'UPDATE tile_ownership SET fertility = $1, last_modified = NOW() WHERE q = $2 AND r = $3',
+      [fertility, q, r]
+    );
+  }
+
+  /**
+   * Hole Fruchtbarkeit eines Tiles
+   */
+  async getTileFertility(q: number, r: number): Promise<number | null> {
+    const result = await this.pool.query<{ fertility: string | number | null }>(
+      'SELECT fertility FROM tile_ownership WHERE q = $1 AND r = $2',
+      [q, r]
+    );
+    const fertility = result.rows[0]?.fertility;
+    if (fertility === null || fertility === undefined) {
+      return null;
+    }
+    return typeof fertility === 'string' ? parseFloat(fertility) : fertility;
   }
 }

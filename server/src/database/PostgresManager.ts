@@ -255,6 +255,30 @@ export class PostgresManager {
   }
 
   // ===========================
+  // TILE BIOME (Delegate to TileRepository)
+  // ===========================
+
+  async setTileBiome(q: number, r: number, biome: string): Promise<void> {
+    return this.tiles.setTileBiome(q, r, biome);
+  }
+
+  async getTileBiome(q: number, r: number): Promise<string | null> {
+    return this.tiles.getTileBiome(q, r);
+  }
+
+  async getPlayerTilesByBiome(owner: string, biome: string): Promise<Array<{ q: number; r: number }>> {
+    return this.tiles.getPlayerTilesByBiome(owner, biome);
+  }
+
+  async setTileFertility(q: number, r: number, fertility: number): Promise<void> {
+    return this.tiles.setTileFertility(q, r, fertility);
+  }
+
+  async getTileFertility(q: number, r: number): Promise<number | null> {
+    return this.tiles.getTileFertility(q, r);
+  }
+
+  // ===========================
   // TILE EXPLORATION (Delegate to TileRepository)
   // ===========================
 
@@ -289,6 +313,18 @@ export class PostgresManager {
 
   async setTilePopulation(q: number, r: number, population: number): Promise<void> {
     return this.tiles.setTilePopulation(q, r, population);
+  }
+
+  async setTileResources(
+    q: number,
+    r: number,
+    resources: Array<{ type: string; amount: number }>
+  ): Promise<void> {
+    return this.tiles.setTileResources(q, r, resources);
+  }
+
+  async getTileResources(q: number, r: number): Promise<Array<{ type: string; amount: number }>> {
+    return this.tiles.getTileResources(q, r);
   }
 
   // ===========================

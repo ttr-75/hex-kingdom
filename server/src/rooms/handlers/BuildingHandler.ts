@@ -2,6 +2,7 @@ import { Client } from '@colyseus/core';
 import { GameRoomState, BuildingState, PlayerState } from '../GameRoomState.js';
 import { PostgresManager } from '../../database/PostgresManager.js';
 import { ProductionSystem } from '../systems/ProductionSystem.js';
+import { BiomeConversionSystem } from '../systems/BiomeConversionSystem.js';
 import {
   BUILDING_DEFINITIONS,
   BuildCommand,
@@ -15,7 +16,8 @@ export class BuildingHandler {
     private state: GameRoomState,
     private postgres: PostgresManager,
     private productionSystem: ProductionSystem,
-    private getPlayerByClient: (client: Client) => PlayerState | undefined
+    private getPlayerByClient: (client: Client) => PlayerState | undefined,
+    private biomeConversionSystem?: BiomeConversionSystem
   ) {}
 
   async handleBuild(client: Client, command: BuildCommand): Promise<void> {
@@ -176,6 +178,16 @@ export class BuildingHandler {
           this.productionSystem.saveProductionState(building.owner).catch(err => {
             console.error('Failed to save production state after building completion:', err);
           });
+          
+          // Prüfe ob Tile zu Settlement konvertiert werden kann
+          if (this.biomeConversionSystem) {
+            console.log(`🔄 Checking biome conversion for tile (${building.q}, ${building.r}) after building completion`);
+            this.biomeConversionSystem.checkSpecificTile(building.q, building.r).catch(err => {
+              console.error(`❌ Failed to check biome conversion for tile (${building.q}, ${building.r}):`, err);
+            });
+          } else {
+            console.warn(`⚠️ BiomeConversionSystem not available for tile (${building.q}, ${building.r})`);
+          }
         } else {
           building.constructionProgress = Math.max(0, Math.min(1, elapsed / totalTime));
         }

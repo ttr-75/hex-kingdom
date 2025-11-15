@@ -1,4 +1,4 @@
-import { BuildingType, UnitType } from '@hex-kingdom/shared';
+import { BuildingType, UnitType, ResourceType, RESOURCE_DEFINITIONS } from '@hex-kingdom/shared';
 import { BuildingState, PlayerState } from '../../types/room-state';
 import { UNIT_DEFINITIONS, BUILDING_DEFINITIONS } from '@hex-kingdom/shared/src/game-data';
 
@@ -107,17 +107,17 @@ export default function BuildingsTab({
                           <span className="recruit-button-cost">
                             {UNIT_DEFINITIONS[UnitType.SCOUT].cost.wood && (
                               <span className={`cost-item ${currentPlayer && UNIT_DEFINITIONS[UnitType.SCOUT].cost.wood > currentPlayer.wood ? 'insufficient' : ''}`}>
-                                🪵 {UNIT_DEFINITIONS[UnitType.SCOUT].cost.wood}
+                                {RESOURCE_DEFINITIONS[ResourceType.WOOD].icon} {UNIT_DEFINITIONS[UnitType.SCOUT].cost.wood}
                               </span>
                             )}
                             {UNIT_DEFINITIONS[UnitType.SCOUT].cost.food && (
                               <span className={`cost-item ${currentPlayer && UNIT_DEFINITIONS[UnitType.SCOUT].cost.food > currentPlayer.food ? 'insufficient' : ''}`}>
-                                🌾 {UNIT_DEFINITIONS[UnitType.SCOUT].cost.food}
+                                {RESOURCE_DEFINITIONS[ResourceType.FOOD].icon} {UNIT_DEFINITIONS[UnitType.SCOUT].cost.food}
                               </span>
                             )}
                             {UNIT_DEFINITIONS[UnitType.SCOUT].cost.gold && (
                               <span className={`cost-item ${currentPlayer && UNIT_DEFINITIONS[UnitType.SCOUT].cost.gold > currentPlayer.gold ? 'insufficient' : ''}`}>
-                                💰 {UNIT_DEFINITIONS[UnitType.SCOUT].cost.gold}
+                                {RESOURCE_DEFINITIONS[ResourceType.GOLD].icon} {UNIT_DEFINITIONS[UnitType.SCOUT].cost.gold}
                               </span>
                             )}
                           </span>
@@ -199,11 +199,11 @@ export default function BuildingsTab({
                         {buildingDef?.icon} {buildingDef?.name || buildingType}
                       </span>
                       <span className="build-button-cost">
-                        {cost?.wood && <span className={`cost-item ${currentPlayer && cost.wood > (currentPlayer.wood ?? 0) ? 'insufficient' : ''}`}>🪵 {cost.wood}</span>}
-                        {cost?.stone && <span className={`cost-item ${currentPlayer && cost.stone > (currentPlayer.stone ?? 0) ? 'insufficient' : ''}`}>🪨 {cost.stone}</span>}
-                        {cost?.iron && <span className={`cost-item ${currentPlayer && cost.iron > (currentPlayer.iron ?? 0) ? 'insufficient' : ''}`}>⚔️ {cost.iron}</span>}
-                        {cost?.gold && <span className={`cost-item ${currentPlayer && cost.gold > (currentPlayer.gold ?? 0) ? 'insufficient' : ''}`}>💰 {cost.gold}</span>}
-                        {cost?.food && <span className={`cost-item ${currentPlayer && cost.food > (currentPlayer.food ?? 0) ? 'insufficient' : ''}`}>🌾 {cost.food}</span>}
+                        {cost?.wood && <span className={`cost-item ${currentPlayer && cost.wood > (currentPlayer.wood ?? 0) ? 'insufficient' : ''}`}>{RESOURCE_DEFINITIONS[ResourceType.WOOD].icon} {cost.wood}</span>}
+                        {cost?.stone && <span className={`cost-item ${currentPlayer && cost.stone > (currentPlayer.stone ?? 0) ? 'insufficient' : ''}`}>{RESOURCE_DEFINITIONS[ResourceType.STONE].icon} {cost.stone}</span>}
+                        {cost?.iron && <span className={`cost-item ${currentPlayer && cost.iron > (currentPlayer.iron ?? 0) ? 'insufficient' : ''}`}>{RESOURCE_DEFINITIONS[ResourceType.IRON].icon} {cost.iron}</span>}
+                        {cost?.gold && <span className={`cost-item ${currentPlayer && cost.gold > (currentPlayer.gold ?? 0) ? 'insufficient' : ''}`}>{RESOURCE_DEFINITIONS[ResourceType.GOLD].icon} {cost.gold}</span>}
+                        {cost?.food && <span className={`cost-item ${currentPlayer && cost.food > (currentPlayer.food ?? 0) ? 'insufficient' : ''}`}>{RESOURCE_DEFINITIONS[ResourceType.FOOD].icon} {cost.food}</span>}
                       </span>
                     </div>
                   </button>
