@@ -609,71 +609,19 @@ export class HexRenderer {
     }
   }
   
-  // Update buildings
-  updateBuildings(buildings: Map<string, BuildingState>) {
-    if (!this.isReady || !this.buildingContainer) return;
+  // Update buildings (disabled - buildings are not shown on map anymore)
+  updateBuildings(_buildings: Map<string, BuildingState>) {
+    // Buildings are now only shown in the TileInfoPanel, not on the map
+    // This function is kept for compatibility but does nothing
+    if (!this.isReady) return;
     
-    // OPTIMIZED: Clear old buildings without destroying container
-    this.buildings.forEach(g => g.clear());
-    
-    // Remove buildings not in new set
-    const keysToRemove: string[] = [];
-    this.buildings.forEach((_, key) => {
-      if (!buildings.has(key)) {
-        keysToRemove.push(key);
-      }
-    });
-    keysToRemove.forEach(key => {
-      const g = this.buildings.get(key);
-      if (g) g.destroy();
-      this.buildings.delete(key);
-    });
-    
-    buildings.forEach((building, key) => {
-      let graphics = this.buildings.get(key);
-      
-      if (!graphics) {
-        graphics = new PIXI.Graphics();
-        this.buildingContainer.addChild(graphics);
-        this.buildings.set(key, graphics);
-      } else {
-        graphics.clear();
-      }
-      
-      const pixel = hexToPixel({ q: building.q, r: building.r }, HEX_SIZE);
-      
-      // Building representation (simple square for now)
-      graphics.rect(pixel.x - 15, pixel.y - 15, 30, 30);
-      graphics.fill(0x8B4513);
-      
-      // Level indicator
-      const text = new PIXI.Text({
-        text: `Lv${building.level}`,
-        style: {
-          fontSize: 10,
-          fill: 0xFFFFFF
-        }
+    // Clear any existing building graphics
+    if (this.buildingContainer) {
+      this.buildings.forEach(g => {
+        g.destroy();
       });
-      text.anchor.set(0.5);
-      text.position.set(pixel.x, pixel.y + 25);
-      this.buildingContainer.addChild(text);
-      
-      // Construction progress
-      if (building.constructionProgress < 1) {
-        const progressBar = new PIXI.Graphics();
-        progressBar.rect(
-          pixel.x - 15,
-          pixel.y + 20,
-          30 * building.constructionProgress,
-          4
-        );
-        progressBar.fill(0x00FF00);
-        this.buildingContainer.addChild(progressBar);
-      }
-      
-      this.buildingContainer.addChild(graphics);
-      this.buildings.set(key, graphics);
-    });
+      this.buildings.clear();
+    }
   }
   
   // Update units

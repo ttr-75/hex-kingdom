@@ -41,8 +41,7 @@ export class BuildingRepository {
         completed_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW(),
         CONSTRAINT fk_building_owner FOREIGN KEY (owner) 
-          REFERENCES players(username) ON DELETE CASCADE,
-        CONSTRAINT unique_tile_building UNIQUE (q, r)
+          REFERENCES players(username) ON DELETE CASCADE
       )
     `);
 
@@ -78,14 +77,22 @@ export class BuildingRepository {
   }
 
   /**
-   * Hole Gebäude an Position
+   * Hole Gebäude an Position (jetzt als Array, da mehrere möglich)
    */
-  async getBuildingAtPosition(q: number, r: number): Promise<Building | null> {
+  async getBuildingsAtPosition(q: number, r: number): Promise<Building[]> {
     const result = await this.pool.query<Building>(
-      'SELECT * FROM buildings WHERE q = $1 AND r = $2',
+      'SELECT * FROM buildings WHERE q = $1 AND r = $2 ORDER BY created_at ASC',
       [q, r]
     );
-    return result.rows[0] || null;
+    return result.rows;
+  }
+
+  /**
+   * @deprecated Use getBuildingsAtPosition instead - kept for backwards compatibility
+   */
+  async getBuildingAtPosition(q: number, r: number): Promise<Building | null> {
+    const buildings = await this.getBuildingsAtPosition(q, r);
+    return buildings[0] || null;
   }
 
   /**
@@ -157,13 +164,15 @@ export class BuildingRepository {
     try {
       await client.query('BEGIN');
 
-      // 1. Prüfe ob Tile bereits bebaut ist
+      // 1. Prüfe Anzahl der Gebäude auf diesem Tile (optional: Max-Limit)
       const existing = await client.query<Building>(
         'SELECT id FROM buildings WHERE q = $1 AND r = $2',
         [building.q, building.r]
       );
-      if (existing.rows.length > 0) {
-        throw new Error('Tile already has a building');
+      // Optional: Limit auf z.B. 10 Gebäude pro Tile
+      const MAX_BUILDINGS_PER_TILE = 10;
+      if (existing.rows.length >= MAX_BUILDINGS_PER_TILE) {
+        throw new Error(`Maximum number of buildings (${MAX_BUILDINGS_PER_TILE}) on this tile reached`);
       }
 
       // 2. Erstelle Building
@@ -183,13 +192,13 @@ export class BuildingRepository {
         ]
       );
 
-      // 3. Setze Tile Owner
+      // 3. Setze Tile Owner (wenn noch nicht gesetzt)
       await client.query(
-        `INSERT INTO tile_ownership (q, r, owner, building_id, last_modified)
-         VALUES ($1, $2, $3, $4, NOW())
+        `INSERT INTO tile_ownership (q, r, owner, last_modified)
+         VALUES ($1, $2, $3, NOW())
          ON CONFLICT (q, r) DO UPDATE 
-         SET owner = $3, building_id = $4, last_modified = NOW()`,
-        [building.q, building.r, owner, building.id]
+         SET owner = COALESCE(tile_ownership.owner, $3), last_modified = NOW()`,
+        [building.q, building.r, owner]
       );
 
       await client.query('COMMIT');

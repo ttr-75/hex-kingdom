@@ -46,18 +46,22 @@ export class BuildingHandler {
     }
     
     const tileKey = hexToKey(command.position);
-    const existingBuilding = Array.from(this.state.buildings.values()).find(
+    
+    // Prüfe Anzahl der Gebäude auf diesem Tile
+    const existingBuildings = Array.from(this.state.buildings.values()).filter(
       b => b.q === command.position.q && b.r === command.position.r
     );
     
-    if (existingBuilding) {
-      client.send('error', { message: 'Feld bereits bebaut' });
+    const MAX_BUILDINGS_PER_TILE = 10;
+    if (existingBuildings.length >= MAX_BUILDINGS_PER_TILE) {
+      client.send('error', { message: `Maximal ${MAX_BUILDINGS_PER_TILE} Gebäude pro Feld möglich` });
       return;
     }
     
-    const existingInDB = await this.postgres.getBuildingAtPosition(command.position.q, command.position.r);
-    if (existingInDB) {
-      client.send('error', { message: 'Feld bereits bebaut (in DB)' });
+    // Prüfe auch in der Datenbank
+    const existingInDB = await this.postgres.getBuildingsAtPosition(command.position.q, command.position.r);
+    if (existingInDB.length >= MAX_BUILDINGS_PER_TILE) {
+      client.send('error', { message: `Maximal ${MAX_BUILDINGS_PER_TILE} Gebäude pro Feld möglich (DB)` });
       return;
     }
     

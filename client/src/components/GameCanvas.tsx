@@ -371,22 +371,21 @@ export default function GameCanvas() {
   // Get selected tile and building data - aktualisiert sich automatisch wenn buildings sich ändern
   const selectedTile = selectedHex ? tiles.get(`${selectedHex.q},${selectedHex.r}`) : undefined;
   
-  // Find building on the selected tile by coordinates (buildings are keyed by ID, not coordinates)
-  const selectedBuilding = selectedHex 
-    ? Array.from(buildings.values()).find(b => b.q === selectedHex.q && b.r === selectedHex.r)
-    : undefined;
+  // Find all buildings on the selected tile by coordinates (buildings are keyed by ID, not coordinates)
+  const selectedBuildings = selectedHex 
+    ? Array.from(buildings.values()).filter(b => b.q === selectedHex.q && b.r === selectedHex.r)
+    : [];
   
   // Log building updates für debugging
   useEffect(() => {
-    if (selectedBuilding) {
-      console.log('🔄 Selected building updated:', {
-        id: selectedBuilding.id,
-        progress: selectedBuilding.constructionProgress,
-        startTime: selectedBuilding.constructionStartTime,
-        endTime: selectedBuilding.constructionEndTime
-      });
+    if (selectedBuildings.length > 0) {
+      console.log('🔄 Selected buildings updated:', selectedBuildings.map(b => ({
+        id: b.id,
+        type: b.type,
+        progress: b.constructionProgress
+      })));
     }
-  }, [selectedBuilding]);
+  }, [selectedBuildings]);
   
   return (
     <div className="game-canvas-container">
@@ -436,7 +435,7 @@ export default function GameCanvas() {
       <TileInfoPanel
         selectedHex={selectedHex}
         tile={selectedTile}
-        building={selectedBuilding}
+        buildings={selectedBuildings}
         units={units}
         currentPlayer={currentPlayer}
         onBuild={handleBuild}

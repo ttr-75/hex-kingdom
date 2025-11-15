@@ -140,6 +140,10 @@ export class PostgresManager {
     return this.buildings.getBuildingAtPosition(q, r);
   }
 
+  async getBuildingsAtPosition(q: number, r: number): Promise<Building[]> {
+    return this.buildings.getBuildingsAtPosition(q, r);
+  }
+
   async getPlayerBuildings(owner: string): Promise<Building[]> {
     return this.buildings.getPlayerBuildings(owner);
   }

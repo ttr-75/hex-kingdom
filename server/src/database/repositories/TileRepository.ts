@@ -4,7 +4,6 @@ export interface TileOwnership {
   q: number;
   r: number;
   owner: string | null;
-  building_id: string | null;
   last_modified: Date;
 }
 
@@ -29,13 +28,10 @@ export class TileRepository {
         q INTEGER NOT NULL,
         r INTEGER NOT NULL,
         owner VARCHAR(255),
-        building_id VARCHAR(255),
         last_modified TIMESTAMP DEFAULT NOW(),
         PRIMARY KEY (q, r),
         CONSTRAINT fk_tile_owner FOREIGN KEY (owner) 
-          REFERENCES players(username) ON DELETE SET NULL,
-        CONSTRAINT fk_tile_building FOREIGN KEY (building_id) 
-          REFERENCES buildings(id) ON DELETE SET NULL
+          REFERENCES players(username) ON DELETE SET NULL
       )
     `);
 
@@ -115,34 +111,27 @@ export class TileRepository {
   }
 
   /**
-   * Setze Building auf Tile
+   * @deprecated Building references are now managed separately via buildings table
    */
-  async setTileBuilding(q: number, r: number, buildingId: string): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO tile_ownership (q, r, building_id, last_modified)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (q, r) DO UPDATE 
-       SET building_id = $3, last_modified = NOW()`,
-      [q, r, buildingId]
-    );
+  async setTileBuilding(_q: number, _r: number, _buildingId: string): Promise<void> {
+    console.warn('setTileBuilding is deprecated - buildings are now managed via the buildings table');
+    // No-op: Buildings sind jetzt direkt über die buildings table mit q,r verknüpft
   }
 
   /**
-   * Entferne Building von Tile
+   * @deprecated Building references are now managed separately via buildings table
    */
-  async removeTileBuilding(q: number, r: number): Promise<void> {
-    await this.pool.query(
-      'UPDATE tile_ownership SET building_id = NULL, last_modified = NOW() WHERE q = $1 AND r = $2',
-      [q, r]
-    );
+  async removeTileBuilding(_q: number, _r: number): Promise<void> {
+    console.warn('removeTileBuilding is deprecated - buildings are now managed via the buildings table');
+    // No-op: Buildings werden über die buildings table verwaltet
   }
 
   /**
-   * Cleanup: Lösche Tiles ohne Owner und Building
+   * Cleanup: Lösche Tiles ohne Owner
    */
   async cleanupOrphanedTiles(): Promise<number> {
     const result = await this.pool.query(
-      'DELETE FROM tile_ownership WHERE owner IS NULL AND building_id IS NULL'
+      'DELETE FROM tile_ownership WHERE owner IS NULL'
     );
     return result.rowCount || 0;
   }
