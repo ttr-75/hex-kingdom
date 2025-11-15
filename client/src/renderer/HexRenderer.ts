@@ -379,17 +379,18 @@ export class HexRenderer {
     let newTileCount = 0;
     let updatedTileCount = 0;
     
-    // If forceRedraw, remove tiles that are not in the new set
+    // OPTIMIZED: Reuse graphics instead of destroy/recreate
     if (forceRedraw) {
       const keysToRemove: string[] = [];
       this.tiles.forEach((graphics, key) => {
         if (!tiles.has(key)) {
-          graphics.destroy();
+          graphics.clear(); // Clear instead of destroy
+          graphics.visible = false; // Hide for potential reuse
           keysToRemove.push(key);
         }
       });
       keysToRemove.forEach(key => this.tiles.delete(key));
-      console.log(`🗑️ Removed ${keysToRemove.length} tiles during forceRedraw`);
+      console.log(`🗑️ Cleared ${keysToRemove.length} tiles during forceRedraw`);
     }
     
     // Add or update tiles
@@ -420,8 +421,10 @@ export class HexRenderer {
         this.mapContainer.addChild(graphics);
         this.tiles.set(key, graphics);
       } else if (forceRedraw) {
-        // Existing tile, redraw it
+        // OPTIMIZED: Clear and redraw existing graphics
         updatedTileCount++;
+        graphics.clear();
+        graphics.visible = true;
       } else {
         // Existing tile, skip if not forcing redraw
         return;
@@ -586,7 +589,8 @@ export class HexRenderer {
     tilesToRemove.forEach(key => {
       const graphics = this.tiles.get(key);
       if (graphics) {
-        graphics.destroy();
+        graphics.clear(); // OPTIMIZED: Clear instead of destroy
+        graphics.visible = false;
         this.tiles.delete(key);
         removedCount++;
       }
@@ -600,12 +604,34 @@ export class HexRenderer {
   // Update buildings
   updateBuildings(buildings: Map<string, BuildingState>) {
     if (!this.isReady || !this.buildingContainer) return;
-    // Clear old buildings
-    this.buildings.forEach(g => g.destroy());
-    this.buildings.clear();
+    
+    // OPTIMIZED: Clear old buildings without destroying container
+    this.buildings.forEach(g => g.clear());
+    
+    // Remove buildings not in new set
+    const keysToRemove: string[] = [];
+    this.buildings.forEach((_, key) => {
+      if (!buildings.has(key)) {
+        keysToRemove.push(key);
+      }
+    });
+    keysToRemove.forEach(key => {
+      const g = this.buildings.get(key);
+      if (g) g.destroy();
+      this.buildings.delete(key);
+    });
     
     buildings.forEach((building, key) => {
-      const graphics = new PIXI.Graphics();
+      let graphics = this.buildings.get(key);
+      
+      if (!graphics) {
+        graphics = new PIXI.Graphics();
+        this.buildingContainer.addChild(graphics);
+        this.buildings.set(key, graphics);
+      } else {
+        graphics.clear();
+      }
+      
       const pixel = hexToPixel({ q: building.q, r: building.r }, HEX_SIZE);
       
       // Building representation (simple square for now)
@@ -653,13 +679,31 @@ export class HexRenderer {
     
     console.log(`🗡️ Rendering ${units.size} units to map`);
     
-    // Clear old units
-    this.units.forEach(g => g.destroy());
-    this.units.clear();
+    // OPTIMIZED: Clear and reuse existing unit containers
+    const keysToRemove: string[] = [];
+    this.units.forEach((container, key) => {
+      if (!units.has(key)) {
+        container.destroy();
+        keysToRemove.push(key);
+      }
+    });
+    keysToRemove.forEach(key => this.units.delete(key));
     
     units.forEach((unit, key) => {
       console.log(`  - Rendering unit ${key} (${unit.type}) at (${unit.q}, ${unit.r}), scoutTexture=${this.scoutTexture ? 'loaded' : 'null'}`);
-      const container = new PIXI.Container();
+      
+      let container = this.units.get(key);
+      
+      // OPTIMIZED: Reuse existing container if unit hasn't changed position
+      if (!container) {
+        container = new PIXI.Container();
+        this.unitContainer.addChild(container);
+        this.units.set(key, container);
+      } else {
+        // Clear existing children for update
+        container.removeChildren();
+      }
+      
       const pixel = hexToPixel({ q: unit.q, r: unit.r }, HEX_SIZE);
       container.position.set(pixel.x, pixel.y);
       
@@ -706,9 +750,6 @@ export class HexRenderer {
       healthBar.rect(-12, 22, 24 * (unit.health / 100), 3);
       healthBar.fill(unit.health > 70 ? 0x4CAF50 : unit.health > 30 ? 0xFFA726 : 0xFF5252);
       container.addChild(healthBar);
-      
-      this.unitContainer.addChild(container);
-      this.units.set(key, container);
     });
   }
   

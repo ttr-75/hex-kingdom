@@ -1267,11 +1267,21 @@ export class GameRoom extends Room<GameRoomState> {
 
     // Berechne Sichtweite mit Line-of-Sight
     const unitVisionBonus = unitDef.visionBonus || 0;
+    const baseVisionRange = this.getBiomeViewDistance(unitTile.biome) + unitVisionBonus;
+    const maxSearchRange = baseVisionRange + 2; // Small buffer for terrain effects
 
     // Sammle sichtbare Tiles mit LoS check
     const newlyVisible: Array<{ q: number; r: number }> = [];
     
+    // OPTIMIZED: Only check tiles within possible vision range
     this.state.tiles.forEach((tile) => {
+      const dq = tile.q - unit.q;
+      const dr = tile.r - unit.r;
+      const distance = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+      
+      // Skip tiles that are definitely too far
+      if (distance > maxSearchRange) return;
+      
       if (this.canSeeTile(
         { q: unit.q, r: unit.r },
         unitTile.biome,
@@ -1381,8 +1391,18 @@ export class GameRoom extends Room<GameRoomState> {
         const key = hexToKey({ q: tile.q, r: tile.r });
         visibleKeys.add(key);
         
-        // Add tiles in viewDistance with LoS check
+        // Calculate max range for this tile
+        const baseVisionRange = this.getBiomeViewDistance(tile.biome);
+        const maxSearchRange = baseVisionRange + 2;
+        
+        // Add tiles in viewDistance with LoS check (OPTIMIZED)
         this.state.tiles.forEach((t2, k2) => {
+          const dq = t2.q - tile.q;
+          const dr = t2.r - tile.r;
+          const distance = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+          
+          if (distance > maxSearchRange) return;
+          
           if (this.canSeeTile(
             { q: tile.q, r: tile.r },
             tile.biome,

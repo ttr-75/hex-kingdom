@@ -19,6 +19,7 @@ export function findPath(
   isPassable: (coord: HexCoord) => boolean
 ): HexCoord[] | null {
   const openSet: PathNode[] = [];
+  const openSetMap = new Map<string, PathNode>(); // OPTIMIZED: Fast lookup
   const closedSet = new Set<string>();
   
   const startNode: PathNode = {
@@ -29,7 +30,9 @@ export function findPath(
     parent: null
   };
   
+  const startKey = `${start.q},${start.r}`;
   openSet.push(startNode);
+  openSetMap.set(startKey, startNode);
   
   while (openSet.length > 0) {
     // Find node with lowest fCost
@@ -37,6 +40,7 @@ export function findPath(
     const current = openSet.shift()!;
     
     const key = `${current.coord.q},${current.coord.r}`;
+    openSetMap.delete(key); // OPTIMIZED: Remove from map
     
     // Goal reached
     if (current.coord.q === goal.q && current.coord.r === goal.r) {
@@ -58,10 +62,8 @@ export function findPath(
       const hCost = hexDistance(neighbor, goal);
       const fCost = gCost + hCost;
       
-      // Check if neighbor is already in openSet
-      const existingNode = openSet.find(
-        n => n.coord.q === neighbor.q && n.coord.r === neighbor.r
-      );
+      // OPTIMIZED: O(1) lookup instead of O(n) find
+      const existingNode = openSetMap.get(neighborKey);
       
       if (existingNode) {
         // Update if this path is better
@@ -71,13 +73,15 @@ export function findPath(
           existingNode.parent = current;
         }
       } else {
-        openSet.push({
+        const newNode: PathNode = {
           coord: neighbor,
           gCost,
           hCost,
           fCost,
           parent: current
-        });
+        };
+        openSet.push(newNode);
+        openSetMap.set(neighborKey, newNode);
       }
     }
   }
