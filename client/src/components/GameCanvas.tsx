@@ -272,6 +272,14 @@ export default function GameCanvas() {
     room.onMessage('visibilityUpdate', handleVisibilityUpdate);
     room.onMessage('error', handleError);
     
+    // Handle unit movement with path
+    room.onMessage('unitMovementStarted', (message: { unitId: string; path: Array<{ q: number; r: number; duration: number }>; startTime: number }) => {
+      console.log(`🚶 Unit movement started:`, message);
+      if (rendererRef.current) {
+        rendererRef.current.startUnitMovementAnimation(message.unitId, message.path, message.startTime);
+      }
+    });
+    
     return () => {
       room.removeAllListeners();
     };

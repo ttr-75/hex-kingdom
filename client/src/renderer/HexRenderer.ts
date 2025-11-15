@@ -54,6 +54,14 @@ export class HexRenderer {
   private dragonMarkers: Map<string, PIXI.Container> = new Map();
   private territoryBorders: Map<string, PIXI.Graphics> = new Map(); // Territoriums-Grenzen
   
+  // Unit movement animations
+  private unitMovementAnimations: Map<string, {
+    path: Array<{ q: number; r: number; duration: number }>;
+    currentIndex: number;
+    startTime: number;
+    tileStartTime: number;
+  }> = new Map();
+  
   private scoutTexture: PIXI.Texture | null = null; // Scout icon texture
   
   private camera = { x: 0, y: 0, zoom: 1 };
@@ -882,6 +890,83 @@ export class HexRenderer {
     this.movementOverlay.removeChildren();
     
     console.log(`❌ Movement mode cleared`);
+  }
+  
+  // Start unit movement animation
+  startUnitMovementAnimation(unitId: string, path: Array<{ q: number; r: number; duration: number }>, startTime: number) {
+    console.log(`🎬 Starting movement animation for unit ${unitId}, path length: ${path.length}`);
+    
+    this.unitMovementAnimations.set(unitId, {
+      path,
+      currentIndex: 1, // Start at index 1 (index 0 is current position)
+      startTime,
+      tileStartTime: startTime
+    });
+    
+    // Start the animation loop if not already running
+    if (!this.animationLoopRunning) {
+      this.startAnimationLoop();
+    }
+  }
+  
+  private animationLoopRunning = false;
+  
+  private startAnimationLoop() {
+    if (this.animationLoopRunning) return;
+    this.animationLoopRunning = true;
+    
+    const animate = () => {
+      if (!this.animationLoopRunning || this.isDestroyed) return;
+      
+      const now = Date.now();
+      const toRemove: string[] = [];
+      
+      this.unitMovementAnimations.forEach((anim, unitId) => {
+        const container = this.units.get(unitId);
+        if (!container) {
+          toRemove.push(unitId);
+          return;
+        }
+        
+        const currentTile = anim.path[anim.currentIndex - 1];
+        const nextTile = anim.path[anim.currentIndex];
+        const duration = nextTile.duration;
+        
+        const elapsed = now - anim.tileStartTime;
+        const progress = Math.min(elapsed / duration, 1);
+        
+        // Interpolate position
+        const startPixel = hexToPixel({ q: currentTile.q, r: currentTile.r }, HEX_SIZE);
+        const endPixel = hexToPixel({ q: nextTile.q, r: nextTile.r }, HEX_SIZE);
+        
+        container.position.x = startPixel.x + (endPixel.x - startPixel.x) * progress;
+        container.position.y = startPixel.y + (endPixel.y - startPixel.y) * progress;
+        
+        // Check if tile reached
+        if (progress >= 1) {
+          anim.currentIndex++;
+          anim.tileStartTime = now;
+          
+          // Check if movement complete
+          if (anim.currentIndex >= anim.path.length) {
+            toRemove.push(unitId);
+            console.log(`✅ Animation complete for unit ${unitId}`);
+          }
+        }
+      });
+      
+      toRemove.forEach(id => this.unitMovementAnimations.delete(id));
+      
+      // Stop loop if no more animations
+      if (this.unitMovementAnimations.size === 0) {
+        this.animationLoopRunning = false;
+        return;
+      }
+      
+      requestAnimationFrame(animate);
+    };
+    
+    requestAnimationFrame(animate);
   }
   
   destroy() {

@@ -95,7 +95,7 @@ export const UNIT_DEFINITIONS: Record<UnitType, UnitDefinition> = {
     upkeep: { food: 2, gold: 1 }, // Pro Minute
     health: 100,
     movementRange: 3,
-    speedMultiplier: 1.0, // Normal speed
+    speedMultiplier: 0.7, // Normal speed
     attackPower: 15,
     defense: 10,
     recruitmentTime: 60
@@ -107,7 +107,7 @@ export const UNIT_DEFINITIONS: Record<UnitType, UnitDefinition> = {
     upkeep: { food: 1.5, gold: 1 },
     health: 70,
     movementRange: 3,
-    speedMultiplier: 1.0, // Normal speed
+    speedMultiplier: 0.8, // Normal speed
     attackPower: 20,
     defense: 5,
     recruitmentTime: 50
@@ -132,7 +132,7 @@ export const UNIT_DEFINITIONS: Record<UnitType, UnitDefinition> = {
     upkeep: { food: 1, gold: 0.5 },
     health: 50,
     movementRange: 6,
-    speedMultiplier: 1.2, // Faster than normal units
+    speedMultiplier: 2.5, // Faster than normal units
     attackPower: 5,
     defense: 3,
     recruitmentTime: 30,

@@ -12,36 +12,30 @@ import {
   CreateTradeOfferCommand,
   AcceptTradeOfferCommand,
   MoveUnitCommand,
-  // RecruitUnitCommand,
-  BUILDING_DEFINITIONS,
-  UNIT_DEFINITIONS,
   STARTING_RESOURCES,
   STARTING_STORAGE_CAPACITY,
   TECHNOLOGY_DEFINITIONS,
-  BIOME_DEFINITIONS,
-  hexToKey,
-  hexLine,
-  HexCoord,
-  findPath
+  UNIT_DEFINITIONS,
+  hexToKey
 } from '@hex-kingdom/shared';
 import { ChunkManager } from '../database/ChunkManager.js';
 import { PostgresManager } from '../database/PostgresManager.js';
 import { RedisSessionManager } from '../database/RedisSessionManager.js';
 
+// Systems
+import { MovementSystem } from './systems/MovementSystem.js';
+import { VisibilitySystem } from './systems/VisibilitySystem.js';
+import { ExplorationSystem } from './systems/ExplorationSystem.js';
+import { ProductionSystem } from './systems/ProductionSystem.js';
+
+// Handlers
+import { UnitHandler } from './handlers/UnitHandler.js';
+import { BuildingHandler } from './handlers/BuildingHandler.js';
+
 // ⏱️ TIME MULTIPLIER - Set this higher in dev mode to speed up all timers
 // 1.0 = normal speed, 10.0 = 10x faster, 20.0 = 20x faster
 const TIME_MULTIPLIER = parseFloat(process.env.TIME_MULTIPLIER || '1') || 1;
 console.log(`⏱️ TIME_MULTIPLIER loaded: ${TIME_MULTIPLIER}x speed`);
-
-// Movement tracking interface
-interface MovingUnit {
-  unitId: string;
-  path: HexCoord[];
-  currentTileIndex: number; // Which tile in path we're currently moving to
-  startTime: number; // When movement started (ms)
-  tileStartTime: number; // When current tile movement started (ms)
-  tileDuration: number; // How long current tile takes (ms)
-}
 
 const PLAYER_COLORS = [
   '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
@@ -68,7 +62,16 @@ export class GameRoom extends Room<GameRoomState> {
   private chunkManager!: ChunkManager; // Für Terrain-Daten (MongoDB)
   private postgres!: PostgresManager; // Für Players, Buildings, TileOwnership (PostgreSQL)
   private redis!: RedisSessionManager; // Für Live-Session-Daten (Redis - führend!)
-  private movingUnits: Map<string, MovingUnit> = new Map(); // Track units in motion
+  
+  // Systems
+  private movementSystem!: MovementSystem;
+  private visibilitySystem!: VisibilitySystem;
+  private explorationSystem!: ExplorationSystem;
+  private productionSystem!: ProductionSystem;
+  
+  // Handlers
+  private unitHandler!: UnitHandler;
+  private buildingHandler!: BuildingHandler;
 
   async onCreate(_options: any) {
     this.setState(new GameRoomState());
@@ -83,6 +86,21 @@ export class GameRoom extends Room<GameRoomState> {
     await this.postgres.connect();
     await this.redis.connect();
     
+    // Initialize Systems
+    this.visibilitySystem = new VisibilitySystem(this.state, this.postgres, this.clients);
+    this.explorationSystem = new ExplorationSystem(this.state, this.postgres, this.visibilitySystem, this.clients);
+    this.movementSystem = new MovementSystem(
+      this.state,
+      this.postgres,
+      (player, unit, unitDef) => this.explorationSystem.handleUnitExploration(player, unit, unitDef),
+      (player) => this.visibilitySystem.updatePlayerVisibility(player)
+    );
+    this.productionSystem = new ProductionSystem(this.state);
+    
+    // Initialize Handlers
+    this.unitHandler = new UnitHandler(this.state, this.postgres, this.movementSystem, this.explorationSystem);
+    this.buildingHandler = new BuildingHandler(this.state, this.postgres);
+    
     // Load initial world data from MongoDB
     await this.initializeWorld();
     
@@ -94,19 +112,19 @@ export class GameRoom extends Room<GameRoomState> {
     
     // Message Handlers
     this.onMessage('build', (client, message: BuildCommand) => {
-      this.handleBuild(client, message);
+      this.buildingHandler.handleBuild(client, message);
     });
     
     this.onMessage('recruitUnit', (client, message) => {
-      this.handleRecruitUnit(client, message);
+      this.unitHandler.handleRecruitUnit(client, message);
     });
     
     this.onMessage('moveUnit', (client, message: MoveUnitCommand) => {
-      this.handleMoveUnit(client, message);
+      this.unitHandler.handleMoveUnit(client, message);
     });
     
     this.onMessage('cancelMovement', (client, message: { unitId: string }) => {
-      this.handleCancelMovement(client, message);
+      this.unitHandler.handleCancelMovement(client, message);
     });
     
     this.onMessage('research', (client, message: ResearchCommand) => {
@@ -448,7 +466,7 @@ export class GameRoom extends Room<GameRoomState> {
         
         // Berechne sichtbare Tiles mit Line-of-Sight Check
         this.state.tiles.forEach((tile, key) => {
-          if (this.canSeeTile(
+          if (this.visibilitySystem.canSeeTile(
             { q: unit.q, r: unit.r },
             unitTile.biome,
             unitVisionBonus,
@@ -524,8 +542,7 @@ export class GameRoom extends Room<GameRoomState> {
   
   // Hilfsfunktion: Hole viewDistance für ein Biom
   private getBiomeViewDistance(biomeType: string): number {
-    const biomeDef = BIOME_DEFINITIONS[biomeType as keyof typeof BIOME_DEFINITIONS];
-    return biomeDef?.viewDistance ?? 2; // Default: 2 falls Biom unbekannt
+    return this.visibilitySystem.getBiomeViewDistance(biomeType);
   }
 
   onLeave(client: Client, _consented: boolean) {
@@ -621,116 +638,21 @@ export class GameRoom extends Room<GameRoomState> {
     this.state.worldTime += deltaSeconds;
     
     // Update Ressourcen-Produktion
-    this.updateProduction(deltaSeconds);
+    this.productionSystem.updateProduction(deltaSeconds);
     
     // Update Forschung
-    this.updateResearch();
+    this.productionSystem.updateResearch((type, message) => this.broadcast(type, message));
     
     // Update Gebäude-Konstruktion
-    this.updateConstruction(deltaSeconds);
+    this.buildingHandler.updateConstruction((type, message) => this.broadcast(type, message));
     
-    // Update unit movements
-    this.updateUnitMovements(now);
+    // Update unit movements (async, runs in background)
+    this.movementSystem.updateMovements(now).catch(err => {
+      console.error('❌ Error in updateMovements:', err);
+    });
     
     // Entferne abgelaufene Handelsangebote
     this.cleanupExpiredTradeOffers();
-  }
-
-  private updateProduction(deltaSeconds: number) {
-    this.state.buildings.forEach((building) => {
-      if (building.constructionProgress < 1) return;
-      
-      const player = this.state.players.get(building.owner);
-      if (!player) return;
-      
-      const def = BUILDING_DEFINITIONS[building.type as keyof typeof BUILDING_DEFINITIONS];
-      if (!def.baseProduction) return;
-      
-      // Berechne Produktion basierend auf Level
-      const productionMultiplier = Math.pow(1.2, building.level - 1);
-      
-      if (def.baseProduction.wood) {
-        player.wood = Math.min(
-          player.wood + def.baseProduction.wood * productionMultiplier * deltaSeconds,
-          player.storageWood
-        );
-      }
-      if (def.baseProduction.stone) {
-        player.stone = Math.min(
-          player.stone + def.baseProduction.stone * productionMultiplier * deltaSeconds,
-          player.storageStone
-        );
-      }
-      if (def.baseProduction.iron) {
-        player.iron = Math.min(
-          player.iron + def.baseProduction.iron * productionMultiplier * deltaSeconds,
-          player.storageIron
-        );
-      }
-      if (def.baseProduction.food) {
-        player.food = Math.min(
-          player.food + def.baseProduction.food * productionMultiplier * deltaSeconds,
-          player.storageFood
-        );
-      }
-    });
-  }
-
-  private updateResearch() {
-    this.state.players.forEach((player) => {
-      if (!player.currentResearch || player.researchEndTime === 0) return;
-      
-      if (Date.now() >= player.researchEndTime) {
-        player.researchedTechs.push(player.currentResearch);
-        player.currentResearch = '';
-        player.researchEndTime = 0;
-        
-        // Broadcast completion (könnte erweitert werden)
-        this.broadcast('researchCompleted', {
-          playerId: player.id,
-          technology: player.currentResearch
-        });
-      }
-    });
-  }
-
-  private updateConstruction(_deltaSeconds: number) {
-    const now = Date.now();
-    
-    this.state.buildings.forEach((building) => {
-      // Überspringe fertige Gebäude
-      if (building.constructionProgress >= 1) return;
-      
-      // Berechne Progress basierend auf Zeitstempeln
-      if (building.constructionEndTime > 0 && building.constructionStartTime > 0) {
-        const totalTime = building.constructionEndTime - building.constructionStartTime;
-        const elapsed = now - building.constructionStartTime;
-        
-        if (now >= building.constructionEndTime) {
-          // Bau abgeschlossen
-          building.constructionProgress = 1;
-          console.log(`✅ Building completed: ${building.type} at (${building.q}, ${building.r})`);
-          
-          this.broadcast('buildingCompleted', {
-            buildingId: building.id,
-            owner: building.owner
-          });
-          
-          // Async: Persistiere Fertigstellung in DB
-          this.persistBuildingCompletion(building).catch(err => {
-            console.error('Failed to persist building completion:', err);
-          });
-        } else {
-          // Bau läuft noch
-          building.constructionProgress = Math.max(0, Math.min(1, elapsed / totalTime));
-        }
-      }
-    });
-  }
-  
-  private async persistBuildingCompletion(building: BuildingState): Promise<void> {
-    await this.postgres.completeBuilding(building.id);
-    console.log(`💾 Building ${building.id} completion persisted to database`);
   }
 
   private cleanupExpiredTradeOffers() {
@@ -746,117 +668,7 @@ export class GameRoom extends Room<GameRoomState> {
   // COMMAND HANDLERS
   // ===========================
 
-  private async handleBuild(client: Client, command: BuildCommand) {
-    const player = this.state.players.get(client.sessionId);
-    if (!player) return;
-    
-    // Ensure player exists in PostgreSQL before building
-    try {
-      const dbPlayer = await this.postgres.getPlayer(player.username);
-      if (!dbPlayer) {
-        console.error(`❌ Player ${player.username} not found in PostgreSQL, creating now...`);
-        await this.postgres.createPlayer(player.username, player.color);
-        console.log(`✅ Player ${player.username} created in PostgreSQL`);
-      }
-    } catch (error) {
-      console.error(`❌ Failed to verify/create player in PostgreSQL:`, error);
-      client.send('error', { message: 'Datenbankfehler beim Erstellen des Spielers' });
-      return;
-    }
-    
-    const def = BUILDING_DEFINITIONS[command.buildingType];
-    if (!def) return;
-    
-    // Prüfe Ressourcen
-    if (
-      (def.baseCost.wood && player.wood < def.baseCost.wood) ||
-      (def.baseCost.stone && player.stone < def.baseCost.stone) ||
-      (def.baseCost.iron && player.iron < def.baseCost.iron) ||
-      (def.baseCost.gold && player.gold < def.baseCost.gold)
-    ) {
-      client.send('error', { message: 'Nicht genug Ressourcen' });
-      return;
-    }
-    
-    // Prüfe ob Feld besetzt ist
-    const tileKey = hexToKey(command.position);
-    const existingBuilding = Array.from(this.state.buildings.values()).find(
-      b => b.q === command.position.q && b.r === command.position.r
-    );
-    
-    if (existingBuilding) {
-      client.send('error', { message: 'Feld bereits bebaut' });
-      return;
-    }
-    
-    // Prüfe auch in DB ob bereits ein Gebäude existiert
-    const existingInDB = await this.postgres.getBuildingAtPosition(command.position.q, command.position.r);
-    if (existingInDB) {
-      client.send('error', { message: 'Feld bereits bebaut (in DB)' });
-      return;
-    }
-    
-    // Kosten abziehen
-    if (def.baseCost.wood) player.wood -= def.baseCost.wood;
-    if (def.baseCost.stone) player.stone -= def.baseCost.stone;
-    if (def.baseCost.iron) player.iron -= def.baseCost.iron;
-    if (def.baseCost.gold) player.gold -= def.baseCost.gold;
-    
-    // Gebäude erstellen mit Zeitstempeln
-    const building = new BuildingState();
-    building.id = `${player.username}_${Date.now()}`; // Verwende username statt sessionId
-    building.type = command.buildingType;
-    building.q = command.position.q;
-    building.r = command.position.r;
-    building.owner = player.username; // Verwende username als Owner
-    building.level = 1;
-    building.constructionStartTime = Date.now();
-    // Apply TIME_MULTIPLIER to construction time
-    building.constructionEndTime = Date.now() + ((def.constructionTime * 1000) / TIME_MULTIPLIER);
-    building.constructionProgress = 0;
-    
-    console.log(`🏗️ Building started: ${command.buildingType} at (${command.position.q}, ${command.position.r}), will finish at ${new Date(building.constructionEndTime).toLocaleString()}`);
-    
-    // WICHTIG: Erst in DB speichern (atomare Transaktion), DANN zum State hinzufügen
-    try {
-      // Use atomic transaction for building + tile ownership + resource deduction
-      await this.postgres.buildBuildingTransaction(
-        player.username,
-        {
-          id: building.id,
-          type: building.type,
-          q: building.q,
-          r: building.r,
-          owner: building.owner,
-          level: building.level,
-          construction_start_time: building.constructionStartTime,
-          construction_end_time: building.constructionEndTime
-        },
-        def.baseCost // Resource cost already deducted from player state
-      );
-      
-      console.log(`✅ Building ${building.id} saved to DB successfully`);
-      
-      // Nur wenn DB-Speicherung erfolgreich: Füge zum State hinzu
-      this.state.buildings.set(building.id, building);
-      
-      // Markiere Feld als besetzt im RAM
-      const tile = this.state.tiles.get(tileKey);
-      if (tile) {
-        tile.owner = player.username; // Verwende username statt sessionId
-      }
-    } catch (err) {
-      console.error('❌ Failed to save building to DB:', err);
-      
-      // Gebe Ressourcen zurück wenn DB-Fehler
-      if (def.baseCost.wood) player.wood += def.baseCost.wood;
-      if (def.baseCost.stone) player.stone += def.baseCost.stone;
-      if (def.baseCost.iron) player.iron += def.baseCost.iron;
-      if (def.baseCost.gold) player.gold += def.baseCost.gold;
-      
-      client.send('error', { message: 'Fehler beim Speichern des Gebäudes' });
-    }
-  }
+  // Note: handleBuild wurde zu BuildingHandler.handleBuild() verschoben
 
   private handleResearch(client: Client, command: ResearchCommand) {
     const player = this.state.players.get(client.sessionId);
@@ -977,513 +789,16 @@ export class GameRoom extends Room<GameRoomState> {
   }
 
   // ===========================
-  // UNIT COMMANDS
+  // UNIT COMMANDS (MOVED TO HANDLERS)
   // ===========================
-
-  private async handleRecruitUnit(client: Client, command: any) {
-    const player = this.state.players.get(client.sessionId);
-    if (!player) return;
-
-    const { buildingId, unitType } = command;
-    
-    // Prüfe ob Building existiert und dem Spieler gehört
-    const building = this.state.buildings.get(buildingId);
-    if (!building || building.owner !== player.username) {
-      client.send('error', { message: 'Gebäude nicht gefunden' });
-      console.log(`❌ Building ${buildingId} not found or not owned by ${player.username}`);
-      return;
-    }
-
-    // Nur Kaserne kann Units rekrutieren
-    if (building.type !== 'barracks') {
-      client.send('error', { message: 'Nur Kasernen können Einheiten rekrutieren' });
-      return;
-    }
-
-    // Prüfe ob Building fertig gebaut ist
-    if (building.constructionProgress < 1) {
-      client.send('error', { message: 'Gebäude noch nicht fertig' });
-      return;
-    }
-
-    const unitDef = UNIT_DEFINITIONS[unitType as keyof typeof UNIT_DEFINITIONS];
-    if (!unitDef) return;
-
-    // Prüfe Ressourcen
-    if (
-      (unitDef.cost.wood && player.wood < unitDef.cost.wood) ||
-      (unitDef.cost.stone && player.stone < (unitDef.cost.stone || 0)) ||
-      (unitDef.cost.iron && player.iron < unitDef.cost.iron) ||
-      (unitDef.cost.gold && player.gold < unitDef.cost.gold) ||
-      (unitDef.cost.food && player.food < unitDef.cost.food)
-    ) {
-      client.send('error', { message: 'Nicht genug Ressourcen' });
-      return;
-    }
-
-    // Kosten abziehen
-    if (unitDef.cost.wood) player.wood -= unitDef.cost.wood;
-    if (unitDef.cost.stone) player.stone -= (unitDef.cost.stone || 0);
-    if (unitDef.cost.iron) player.iron -= (unitDef.cost.iron || 0);
-    if (unitDef.cost.gold) player.gold -= (unitDef.cost.gold || 0);
-    if (unitDef.cost.food) player.food -= (unitDef.cost.food || 0);
-
-    // Erstelle Unit auf dem Building-Tile
-    const unit = new (await import('./GameRoomState.js')).UnitState();
-    unit.id = `${player.username}_unit_${Date.now()}`;
-    unit.type = unitType;
-    unit.q = building.q;
-    unit.r = building.r;
-    unit.owner = player.username;
-    unit.health = unitDef.health;
-
-    this.state.units.set(unit.id, unit);
-
-    // Speichere in DB
-    await this.postgres.createUnit({
-      id: unit.id,
-      type: unit.type,
-      q: unit.q,
-      r: unit.r,
-      owner: unit.owner,
-      health: unit.health,
-      movement_remaining: unitDef.movementRange
-    });
-
-    console.log(`🎖️ Unit rekrutiert: ${unitType} für ${player.username}`);
-    
-    // Trigger initial exploration for newly recruited unit
-    this.handleUnitExploration(player.username, unit, unitDef).catch(console.error);
-  }
-
-  private async handleMoveUnit(client: Client, command: MoveUnitCommand) {
-    console.log(`🎯 handleMoveUnit called: unitId=${command.unitId}, destination=(${command.destination.q},${command.destination.r})`);
-    
-    const player = this.state.players.get(client.sessionId);
-    if (!player) return;
-
-    const unit = this.state.units.get(command.unitId);
-    if (!unit || unit.owner !== player.username) {
-      client.send('error', { message: 'Einheit nicht gefunden' });
-      return;
-    }
-
-    const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
-    if (!unitDef) return;
-
-    // Check if unit is already moving
-    if (this.movingUnits.has(command.unitId)) {
-      client.send('error', { message: 'Einheit bewegt sich bereits' });
-      return;
-    }
-
-    // Find path using A* pathfinding
-    const start: HexCoord = { q: unit.q, r: unit.r };
-    const goal: HexCoord = command.destination;
-
-    console.log(`🔍 Finding path from (${start.q},${start.r}) to (${goal.q},${goal.r})`);
-
-    const isPassable = (coord: HexCoord): boolean => {
-      const key = hexToKey(coord);
-      const tile = this.state.tiles.get(key);
-      if (!tile) return false;
-      
-      // Check if tile is owned by enemy
-      if (tile.owner && tile.owner !== player.username) return false;
-      
-      // Check if biome is passable (movementMultiplier > 0)
-      const biomeDef = BIOME_DEFINITIONS[tile.biome as keyof typeof BIOME_DEFINITIONS];
-      return biomeDef && biomeDef.movementMultiplier > 0;
-    };
-
-    const path = findPath(start, goal, isPassable);
-    
-    console.log(`📍 Path result:`, path);
-    
-    if (!path || path.length === 0) {
-      client.send('error', { message: 'Kein Weg zum Ziel gefunden' });
-      return;
-    }
-
-    // Path includes start position, so we need at least 2 tiles (start + destination)
-    if (path.length < 2) {
-      client.send('error', { message: 'Bereits am Ziel' });
-      return;
-    }
-
-    // Calculate time for first MOVE (skip index 0 which is current position)
-    const firstMoveTile = path[1];
-    const firstTileKey = hexToKey(firstMoveTile);
-    const firstTileState = this.state.tiles.get(firstTileKey);
-    
-    if (!firstTileState) {
-      client.send('error', { message: 'Ungültiges Ziel' });
-      return;
-    }
-
-    const firstBiomeDef = BIOME_DEFINITIONS[firstTileState.biome as keyof typeof BIOME_DEFINITIONS];
-    const firstTileDuration = this.calculateTileMovementTime(unitDef, firstBiomeDef);
-
-    // Store movement state (start at index 1 to skip current position)
-    const now = Date.now();
-    const movement = {
-      unitId: command.unitId,
-      path,
-      currentTileIndex: 1, // Start at 1, not 0
-      startTime: now,
-      tileStartTime: now,
-      tileDuration: firstTileDuration
-    };
-    this.movingUnits.set(command.unitId, movement);
-
-    // Persist to database
-    this.postgres.saveUnitMovement(movement)
-      .then(() => console.log(`💾 Movement saved to DB for unit ${command.unitId}`))
-      .catch(err => console.error(`❌ Failed to save movement to DB:`, err));
-
-    // Mark unit as moving
-    unit.isMoving = true;
-
-    console.log(`🚶 Unit ${unit.type} started moving from (${unit.q},${unit.r}) to (${goal.q},${goal.r}) - ${path.length} tiles`);
-  }
-
-  private async handleCancelMovement(client: Client, command: { unitId: string }) {
-    const player = this.state.players.get(client.sessionId);
-    if (!player) return;
-
-    const unit = this.state.units.get(command.unitId);
-    if (!unit || unit.owner !== player.username) {
-      client.send('error', { message: 'Einheit nicht gefunden' });
-      return;
-    }
-
-    // Remove from moving units
-    if (this.movingUnits.has(command.unitId)) {
-      this.movingUnits.delete(command.unitId);
-      unit.isMoving = false;
-      
-      // Remove from database
-      this.postgres.deleteUnitMovement(command.unitId).catch(console.error);
-      
-      console.log(`⏹️ Movement cancelled for unit ${unit.type}`);
-    }
-  }
-
-  // Calculate time to move across one tile (in milliseconds)
-  private calculateTileMovementTime(unitDef: any, biomeDef: any): number {
-    const baseTime = 60000; // 1 minute = 60000ms
-    const unitSpeed = unitDef.speedMultiplier || 1.0;
-    const biomeSpeed = biomeDef.movementMultiplier || 1.0;
-    
-    // Apply TIME_MULTIPLIER to speed up in dev mode
-    const totalTime = (baseTime * unitSpeed * biomeSpeed) / TIME_MULTIPLIER;
-    
-    console.log(`⏱️ Movement time: ${baseTime}ms base × ${unitSpeed} unit × ${biomeSpeed} biome ÷ ${TIME_MULTIPLIER}x = ${totalTime}ms (${(totalTime/1000).toFixed(1)}s)`);
-    return totalTime;
-  }
-
-  // Update all moving units (called every frame)
-  private updateUnitMovements(now: number) {
-    const toRemove: string[] = [];
-    
-    this.movingUnits.forEach((movement, unitId) => {
-      const unit = this.state.units.get(unitId);
-      if (!unit) {
-        toRemove.push(unitId);
-        return;
-      }
-
-      const elapsed = now - movement.tileStartTime;
-      
-      // Check if unit reached current tile
-      if (elapsed >= movement.tileDuration) {
-        const nextTile = movement.path[movement.currentTileIndex];
-        
-        // Move unit to next tile
-        unit.q = nextTile.q;
-        unit.r = nextTile.r;
-        
-        console.log(`📍 Unit ${unit.type} reached tile (${nextTile.q},${nextTile.r})`);
-        
-        // Trigger exploration for this tile
-        const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
-        if (unitDef) {
-          this.handleUnitExploration(unit.owner, unit, unitDef).catch(console.error);
-        }
-        
-        // Update visibility for the player (visible vs explored tiles may have changed)
-        this.updatePlayerVisibility(unit.owner).catch(console.error);
-        
-        // Check if journey complete
-        if (movement.currentTileIndex >= movement.path.length - 1) {
-          toRemove.push(unitId);
-          unit.isMoving = false;
-          console.log(`✅ Unit ${unit.type} completed movement to (${nextTile.q},${nextTile.r})`);
-          
-          // Update DB and remove movement
-          this.postgres.moveUnit(unitId, unit.q, unit.r, 0).catch(console.error);
-          this.postgres.deleteUnitMovement(unitId).catch(console.error);
-        } else {
-          // Advance to next tile
-          movement.currentTileIndex++;
-          const nextTargetTile = movement.path[movement.currentTileIndex];
-          const tileKey = hexToKey(nextTargetTile);
-          const tileState = this.state.tiles.get(tileKey);
-          
-          if (tileState) {
-            const biomeDef = BIOME_DEFINITIONS[tileState.biome as keyof typeof BIOME_DEFINITIONS];
-            const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
-            
-            movement.tileStartTime = now;
-            movement.tileDuration = this.calculateTileMovementTime(unitDef, biomeDef);
-            
-            // Update database
-            this.postgres.saveUnitMovement(movement)
-              .then(() => console.log(`💾 Movement updated in DB for tile ${movement.currentTileIndex}`))
-              .catch(err => console.error(`❌ Failed to update movement in DB:`, err));
-          } else {
-            // Invalid tile, stop movement
-            toRemove.push(unitId);
-            console.error(`❌ Unit ${unit.type} reached invalid tile, stopping`);
-          }
-        }
-      }
-    });
-    
-    // Remove completed movements
-    toRemove.forEach(id => this.movingUnits.delete(id));
-  }
-
-  // Exploration-Update wenn Unit sich bewegt (oder spawnt)
-  private async handleUnitExploration(
-    playerUsername: string,
-    unit: any,
-    unitDef: any
-  ) {
-    // Hole Tile-Biom an Unit-Position
-    const unitTileKey = hexToKey({ q: unit.q, r: unit.r });
-    const unitTile = this.state.tiles.get(unitTileKey);
-    if (!unitTile) return;
-
-    // Berechne Sichtweite mit Line-of-Sight
-    const unitVisionBonus = unitDef.visionBonus || 0;
-    const baseVisionRange = this.getBiomeViewDistance(unitTile.biome) + unitVisionBonus;
-    const maxSearchRange = baseVisionRange + 2; // Small buffer for terrain effects
-
-    // Sammle sichtbare Tiles mit LoS check
-    const newlyVisible: Array<{ q: number; r: number }> = [];
-    
-    // OPTIMIZED: Only check tiles within possible vision range
-    this.state.tiles.forEach((tile) => {
-      const dq = tile.q - unit.q;
-      const dr = tile.r - unit.r;
-      const distance = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
-      
-      // Skip tiles that are definitely too far
-      if (distance > maxSearchRange) return;
-      
-      if (this.canSeeTile(
-        { q: unit.q, r: unit.r },
-        unitTile.biome,
-        unitVisionBonus,
-        { q: tile.q, r: tile.r }
-      )) {
-        newlyVisible.push({ q: tile.q, r: tile.r });
-      }
-    });
-
-    if (newlyVisible.length > 0) {
-      // Speichere als explored
-      await this.postgres.addExploredTiles(playerUsername, newlyVisible);
-
-      // Sende Update an Client
-      const client = this.clients.find(c => {
-        const p = this.state.players.get(c.sessionId);
-        return p && p.username === playerUsername;
-      });
-
-      if (client) {
-        const exploreTiles = newlyVisible.map(coord => {
-          const tile = this.state.tiles.get(hexToKey(coord));
-          return tile ? {
-            key: hexToKey(coord),
-            q: tile.q,
-            r: tile.r,
-            biome: tile.biome,
-            fertility: tile.fertility,
-            owner: tile.owner,
-            resources: tile.resources.map(r => ({ type: r.type, amount: r.amount }))
-          } : null;
-        }).filter(t => t !== null);
-
-        client.send('newlyExplored', { tiles: exploreTiles });
-      }
-
-      console.log(`🔭 ${playerUsername} hat ${newlyVisible.length} neue Tiles erkundet`);
-    }
-  }
-
-  // Calculate if a tile is visible with Line-of-Sight check
-  // Vision is reduced by terrain between observer and target
-  private canSeeTile(
-    observerPos: { q: number; r: number },
-    observerBiome: string,
-    observerVisionBonus: number,
-    targetPos: { q: number; r: number }
-  ): boolean {
-    const baseVisionRange = this.getBiomeViewDistance(observerBiome) + observerVisionBonus;
-    
-    // Calculate distance
-    const dq = targetPos.q - observerPos.q;
-    const dr = targetPos.r - observerPos.r;
-    const distance = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
-    
-    // Too far away
-    if (distance > baseVisionRange) return false;
-    if (distance === 0) return true; // Same tile
-    
-    // Get line of tiles between observer and target
-    const line = hexLine(observerPos, targetPos);
-    
-    // Calculate effective vision range considering terrain
-    // The visionBonus helps to see through difficult terrain
-    let remainingVision = baseVisionRange;
-    
-    // Check each tile in the line (except the first one, which is the observer)
-    for (let i = 1; i < line.length - 1; i++) { // Exclude target tile itself
-      const checkTile = this.state.tiles.get(hexToKey(line[i]));
-      if (checkTile) {
-        const biomeViewDistance = this.getBiomeViewDistance(checkTile.biome);
-        
-        // Dense terrain reduces remaining vision
-        // Good terrain (high viewDistance) barely reduces it
-        // Poor terrain (low viewDistance) reduces it significantly
-        const visionCost = Math.max(0, 5 - biomeViewDistance); // 0-5 cost
-        remainingVision -= visionCost * 0.3; // Each point of difficulty costs 0.3 tiles of vision
-        
-        if (remainingVision < i) {
-          // Can't see through this terrain anymore
-          return false;
-        }
-      }
-    }
-    
-    // Can see if we have enough remaining vision to reach the target
-    return remainingVision >= distance;
-  }
-
-  // Update visibility for a player (recalculate visible vs explored)
-  // Only sends changed tiles to reduce network traffic
-  private async updatePlayerVisibility(playerUsername: string) {
-    const client = this.clients.find(c => {
-      const p = this.state.players.get(c.sessionId);
-      return p && p.username === playerUsername;
-    });
-
-    if (!client) return;
-
-    // Calculate current visible tiles
-    const visibleKeys = new Set<string>();
-    
-    // 1. Owned tiles
-    this.state.tiles.forEach(tile => {
-      if (tile.owner === playerUsername) {
-        const key = hexToKey({ q: tile.q, r: tile.r });
-        visibleKeys.add(key);
-        
-        // Calculate max range for this tile
-        const baseVisionRange = this.getBiomeViewDistance(tile.biome);
-        const maxSearchRange = baseVisionRange + 2;
-        
-        // Add tiles in viewDistance with LoS check (OPTIMIZED)
-        this.state.tiles.forEach((t2, k2) => {
-          const dq = t2.q - tile.q;
-          const dr = t2.r - tile.r;
-          const distance = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
-          
-          if (distance > maxSearchRange) return;
-          
-          if (this.canSeeTile(
-            { q: tile.q, r: tile.r },
-            tile.biome,
-            0, // No vision bonus from territory
-            { q: t2.q, r: t2.r }
-          )) {
-            visibleKeys.add(k2);
-          }
-        });
-      }
-    });
-    
-    // 2. Units' vision
-    this.state.units.forEach(unit => {
-      if (unit.owner === playerUsername) {
-        const unitTile = this.state.tiles.get(hexToKey({ q: unit.q, r: unit.r }));
-        if (unitTile) {
-          const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
-          const unitVisionBonus = unitDef?.visionBonus || 0;
-          
-          this.state.tiles.forEach((tile, key) => {
-            if (this.canSeeTile(
-              { q: unit.q, r: unit.r },
-              unitTile.biome,
-              unitVisionBonus,
-              { q: tile.q, r: tile.r }
-            )) {
-              visibleKeys.add(key);
-            }
-          });
-        }
-      }
-    });
-    
-    // Load explored tiles from DB
-    const exploredFromDB = await this.postgres.getExploredTiles(playerUsername);
-    const exploredKeys = new Set<string>(
-      exploredFromDB.map(t => hexToKey({ q: t.q, r: t.r }))
-    );
-    
-    // Prepare tile data
-    const visibleTiles: Array<any> = [];
-    const exploredOnlyTiles: Array<any> = [];
-    
-    visibleKeys.forEach(key => {
-      const tile = this.state.tiles.get(key);
-      if (tile) {
-        visibleTiles.push({
-          key,
-          q: tile.q,
-          r: tile.r,
-          biome: tile.biome,
-          fertility: tile.fertility,
-          owner: tile.owner,
-          resources: tile.resources.map(r => ({ type: r.type, amount: r.amount }))
-        });
-      }
-    });
-    
-    exploredKeys.forEach(key => {
-      if (!visibleKeys.has(key)) {
-        const tile = this.state.tiles.get(key);
-        if (tile) {
-          exploredOnlyTiles.push({
-            key,
-            q: tile.q,
-            r: tile.r,
-            biome: tile.biome
-          });
-        }
-      }
-    });
-    
-    // Send updates - use 'visibilityUpdate' message to replace old tiles
-    client.send('visibilityUpdate', { 
-      visibleTiles,
-      exploredTiles: exploredOnlyTiles
-    });
-    
-    console.log(`👁️ Updated visibility for ${playerUsername}: ${visibleTiles.length} visible, ${exploredOnlyTiles.length} explored-only`);
-  }
+  // handleRecruitUnit → UnitHandler
+  // handleMoveUnit → UnitHandler
+  // handleCancelMovement → UnitHandler
+  // calculateTileMovementTime → MovementSystem
+  // updateUnitMovements → MovementSystem
+  // handleUnitExploration → ExplorationSystem
+  // canSeeTile → VisibilitySystem
+  // updatePlayerVisibility → VisibilitySystem (needs delegation)
 
   // ===========================
   // MAP GENERATION
@@ -1518,99 +833,7 @@ export class GameRoom extends Room<GameRoomState> {
   
   // Restore active movements for a specific player's units
   private async restorePlayerMovements(playerUsername: string) {
-    try {
-      const movements = await this.postgres.getActiveMovements();
-      const playerMovements = movements.filter(m => {
-        const unit = this.state.units.get(m.unitId);
-        return unit && unit.owner === playerUsername;
-      });
-      
-      console.log(`🔄 Restoring ${playerMovements.length} active movements for ${playerUsername}`);
-      
-      const now = Date.now();
-      
-      for (const movement of playerMovements) {
-        const unit = this.state.units.get(movement.unitId);
-        if (!unit) {
-          await this.postgres.deleteUnitMovement(movement.unitId);
-          continue;
-        }
-        
-        // Calculate how much time has passed since the movement was saved
-        const elapsedSinceLastTile = now - movement.tileStartTime;
-        
-        console.log(`  ⏱️ Unit ${movement.unitId}: ${elapsedSinceLastTile}ms elapsed, tile duration: ${movement.tileDuration}ms`);
-        
-        // Fast-forward movement through completed tiles
-        let currentIndex = movement.currentTileIndex;
-        let remainingTime = elapsedSinceLastTile;
-        let currentTileDuration = movement.tileDuration;
-        
-        while (remainingTime >= currentTileDuration && currentIndex < movement.path.length - 1) {
-          // Move to next tile
-          remainingTime -= currentTileDuration;
-          currentIndex++;
-          
-          const nextTile = movement.path[currentIndex];
-          unit.q = nextTile.q;
-          unit.r = nextTile.r;
-          
-          console.log(`  🚀 Fast-forwarded unit to tile ${currentIndex}: (${nextTile.q},${nextTile.r})`);
-          
-          // Trigger exploration for this tile
-          const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
-          if (unitDef) {
-            await this.handleUnitExploration(unit.owner, unit, unitDef);
-          }
-          
-          // Check if this was the last tile
-          if (currentIndex >= movement.path.length - 1) {
-            console.log(`  ✅ Unit ${unit.type} completed movement during offline time`);
-            unit.isMoving = false;
-            await this.postgres.moveUnit(movement.unitId, unit.q, unit.r, 0);
-            await this.postgres.deleteUnitMovement(movement.unitId);
-            
-            // Update visibility for the player
-            await this.updatePlayerVisibility(unit.owner);
-            return; // Movement complete, don't restore to movingUnits
-          }
-          
-          // Calculate duration for next tile
-          const nextTargetTile = movement.path[currentIndex];
-          const tileKey = hexToKey(nextTargetTile);
-          const tileState = this.state.tiles.get(tileKey);
-          
-          if (tileState) {
-            const biomeDef = BIOME_DEFINITIONS[tileState.biome as keyof typeof BIOME_DEFINITIONS];
-            const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
-            currentTileDuration = this.calculateTileMovementTime(unitDef, biomeDef);
-          } else {
-            console.error(`  ❌ Invalid tile at index ${currentIndex}, stopping movement`);
-            await this.postgres.deleteUnitMovement(movement.unitId);
-            return;
-          }
-        }
-        
-        // Update movement with new position and adjusted time
-        movement.currentTileIndex = currentIndex;
-        movement.tileStartTime = now - remainingTime;
-        movement.tileDuration = currentTileDuration;
-        
-        // Restore movement to memory
-        this.movingUnits.set(movement.unitId, movement);
-        unit.isMoving = true;
-        
-        // Update database with new position
-        await this.postgres.saveUnitMovement(movement);
-        
-        console.log(`  ✅ Restored movement for unit ${movement.unitId}: tile ${movement.currentTileIndex}/${movement.path.length}, ${remainingTime}ms into current tile`);
-        
-        // Update visibility for the player
-        await this.updatePlayerVisibility(unit.owner);
-      }
-    } catch (error) {
-      console.error(`❌ Failed to restore movements for ${playerUsername}:`, error);
-    }
+    await this.movementSystem.restorePlayerMovements(playerUsername);
   }
   
   // Lade initiale Chunks (3x3 um Spawn) aus DB
