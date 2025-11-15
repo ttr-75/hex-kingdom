@@ -1,4 +1,4 @@
-import { GameRoomState, UnitState } from '../GameRoomState.js';
+import { GameRoomState } from '../GameRoomState.js';
 import { PostgresManager } from '../../database/PostgresManager.js';
 import {
   UNIT_DEFINITIONS,

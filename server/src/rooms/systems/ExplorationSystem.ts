@@ -3,7 +3,6 @@ import { PostgresManager } from '../../database/PostgresManager.js';
 import { VisibilitySystem } from './VisibilitySystem.js';
 import { Client } from '@colyseus/core';
 import {
-  UNIT_DEFINITIONS,
   hexToKey,
   HexCoord
 } from '@hex-kingdom/shared';
