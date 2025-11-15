@@ -1,4 +1,4 @@
-import { UnitType, UnitDefinition } from './types';
+import { UnitType, UnitDefinition } from '../types';
 
 // ===========================
 // UNIT DEFINITIONS

@@ -1,4 +1,4 @@
-import { BiomeType, BiomeDefinition, ResourceType } from './types';
+import { BiomeType, BiomeDefinition, ResourceType } from '../types';
 
 // ===========================
 // BIOME DEFINITIONS
@@ -24,6 +24,10 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
         amount: { min: 200, max: 400 }
       }
     ],
+    populationSpawn: {
+      probability: { min: 0.05, max: 0.15 }, // 5-15% Wahrscheinlichkeit
+      amount: { min: 1, max: 3 }              // 1-3 Einwohner
+    },
     color: '#4a7c3f'
   },
 
@@ -46,6 +50,10 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
         amount: { min: 200, max: 400 }
       }
     ],
+    populationSpawn: {
+      probability: { min: 0.02, max: 0.08 }, // 2-8% Wahrscheinlichkeit
+      amount: { min: 1, max: 2 }              // 1-2 Einwohner
+    },
     color: '#2d5a2d'
   },
 
@@ -68,6 +76,10 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
         amount: { min: 100, max: 300 }
       }
     ],
+    populationSpawn: {
+      probability: { min: 0.15, max: 0.3 }, // 15-30% Wahrscheinlichkeit
+      amount: { min: 2, max: 10 }            // 2-10 Einwohner
+    },
     color: '#7cb342'
   },
 
@@ -171,6 +183,10 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
         amount: { min: 200, max: 400 }
       }
     ],
+    populationSpawn: {
+      probability: { min: 0.01, max: 0.05 }, // 1-5% Wahrscheinlichkeit
+      amount: { min: 1, max: 2 }              // 1-2 Einwohner
+    },
     color: '#c5a777'
   },
 

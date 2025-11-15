@@ -1,16 +1,27 @@
 import { MongoClient, Db, Collection } from 'mongodb';
 import { hexToKey } from '@hex-kingdom/shared';
+import { Pool } from 'pg';
+import { TileRepository } from './repositories/TileRepository.js';
 
 /**
  * TileDataManager - Hybrid Database System
  * 
- * Statische Daten (Terrain, Ressourcen): Bleiben in Chunks (ChunkManager)
- * Dynamische Daten (Owner, Building-Links): Separate Collection für schnelle Updates
+ * STATISCHE DATEN (MongoDB Chunks via ChunkManager):
+ * - Terrain/Biome
+ * - Fertility
+ * - Initial Resources (bei Map-Generierung)
+ * - Initial Population (bei Map-Generierung)
  * 
- * Vorteile:
- * - Schnelle Updates ohne große Chunk-Dokumente neu zu schreiben
- * - Partial Updates möglich
- * - Bessere Performance bei häufigen Änderungen
+ * DYNAMISCHE DATEN (PostgreSQL via TileRepository):
+ * - Owner (tile_ownership)
+ * - Resources (tile_resources) - nur für claimed Tiles
+ * - Population (tile_population) - nur für claimed Tiles
+ * - Buildings (buildings table)
+ * 
+ * WORKFLOW:
+ * 1. Neues Tile wird geclaimed -> migrateStaticToDynamic()
+ * 2. Ab dann: PostgreSQL = Source of Truth
+ * 3. Tile-Besitzerwechsel -> nur owner in PostgreSQL ändern
  */
 
 export interface TileDynamicData {
@@ -27,9 +38,23 @@ export class TileDataManager {
   private db!: Db;
   private tileDynamicData!: Collection<TileDynamicData>;
   private connected = false;
+  private tileRepository: TileRepository;
 
-  constructor(mongoUrl: string = 'mongodb://localhost:27017') {
+  constructor(
+    mongoUrl: string = 'mongodb://localhost:27017',
+    postgresPool?: Pool
+  ) {
     this.client = new MongoClient(mongoUrl);
+    // Falls kein Pool übergeben wurde, erstelle einen neuen (sollte aber normalerweise übergeben werden)
+    this.tileRepository = new TileRepository(
+      postgresPool || new Pool({
+        host: process.env.POSTGRES_HOST || 'localhost',
+        port: parseInt(process.env.POSTGRES_PORT || '5432'),
+        database: process.env.POSTGRES_DB || 'hex_kingdom',
+        user: process.env.POSTGRES_USER || 'postgres',
+        password: process.env.POSTGRES_PASSWORD || 'postgres'
+      })
+    );
   }
 
   async connect() {
@@ -63,46 +88,92 @@ export class TileDataManager {
   // TILE OWNERSHIP
   // ===========================
 
+  /**
+   * Setze Tile Owner (PostgreSQL)
+   */
   async setTileOwner(q: number, r: number, owner: string): Promise<void> {
-    const key = hexToKey({ q, r });
-    await this.tileDynamicData.updateOne(
-      { _id: key },
-      { 
-        $set: { 
-          owner, 
-          q, 
-          r, 
-          lastModified: new Date() 
-        } 
-      },
-      { upsert: true }
-    );
+    await this.tileRepository.setTileOwner(q, r, owner);
   }
 
+  /**
+   * Entferne Tile Owner (PostgreSQL)
+   */
   async removeTileOwner(q: number, r: number): Promise<void> {
-    const key = hexToKey({ q, r });
-    await this.tileDynamicData.updateOne(
-      { _id: key },
-      { 
-        $unset: { owner: "" },
-        $set: { lastModified: new Date() }
-      }
-    );
+    await this.tileRepository.removeTileOwner(q, r);
   }
 
-  async getTileOwner(q: number, r: number): Promise<string | undefined> {
-    const key = hexToKey({ q, r });
-    const data = await this.tileDynamicData.findOne({ _id: key });
-    return data?.owner;
+  /**
+   * Hole Tile Owner (PostgreSQL)
+   */
+  async getTileOwner(q: number, r: number): Promise<string | null> {
+    return await this.tileRepository.getTileOwner(q, r);
   }
 
-  // Lade alle Tiles eines Spielers (für Territory-View)
+  /**
+   * Lade alle Tiles eines Spielers (PostgreSQL)
+   */
   async getPlayerTiles(owner: string): Promise<Array<{ q: number; r: number }>> {
-    const tiles = await this.tileDynamicData
-      .find({ owner })
-      .project({ q: 1, r: 1, _id: 0 })
-      .toArray();
-    return tiles.map(t => ({ q: t.q, r: t.r }));
+    return await this.tileRepository.getPlayerTiles(owner);
+  }
+
+  // ===========================
+  // TILE CLAIM & MIGRATION
+  // ===========================
+
+  /**
+   * Claim Tile: Migriere statische Daten (MongoDB) -> dynamische Daten (PostgreSQL)
+   * 
+   * @param q Tile Q-Koordinate
+   * @param r Tile R-Koordinate
+   * @param owner Neuer Besitzer
+   * @param staticData Statische Daten aus MongoDB Chunks (resources, population)
+   */
+  async claimTile(
+    q: number,
+    r: number,
+    owner: string,
+    staticData?: {
+      resources?: Array<{ type: string; amount: number }>;
+      population?: number;
+    }
+  ): Promise<void> {
+    // 1. Setze Owner in PostgreSQL
+    await this.tileRepository.setTileOwner(q, r, owner);
+
+    // 2. Migriere Resources (falls vorhanden)
+    if (staticData?.resources && staticData.resources.length > 0) {
+      await this.tileRepository.setTileResources(q, r, staticData.resources);
+    }
+
+    // 3. Migriere Population (falls vorhanden)
+    if (staticData?.population && staticData.population > 0) {
+      await this.tileRepository.setTilePopulation(q, r, staticData.population);
+    }
+
+    console.log(`✅ Tile (${q},${r}) claimed by ${owner}${staticData ? ' with static data migrated' : ''}`);
+  }
+
+  /**
+   * Übertrage Tile zu neuem Besitzer (inkl. Gebäude)
+   * Resources & Population bleiben erhalten!
+   */
+  async transferTile(
+    q: number,
+    r: number,
+    newOwner: string,
+    transferBuildings: boolean = true
+  ): Promise<void> {
+    // 1. Ändere Owner
+    await this.tileRepository.setTileOwner(q, r, newOwner);
+
+    // 2. Optional: Übertrage Gebäude
+    if (transferBuildings) {
+      // Diese Methode wird in BuildingRepository implementiert
+      // await this.buildingRepository.transferBuildingsOnTile(q, r, newOwner);
+      console.log(`✅ Tile (${q},${r}) transferred to ${newOwner} (buildings transfer pending)`);
+    }
+
+    console.log(`✅ Tile (${q},${r}) transferred to ${newOwner}`);
   }
 
   // ===========================

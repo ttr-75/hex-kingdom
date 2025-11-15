@@ -82,6 +82,7 @@ export class HexTileState extends Schema {
   @type('number') fertility: number = 0.5;        // Fruchtbarkeit 0-1
   @type('string') owner: string = '';
   @type([TileResource]) resources = new ArraySchema<TileResource>(); // Mehrere Ressourcen möglich
+  @type('number') population: number = 0;         // Anzahl der Einwohner
 }
 
 // Main Game State

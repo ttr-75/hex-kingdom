@@ -17,7 +17,8 @@
     "complete-cleanup": "tsx src/scripts/completeCleanup.ts",
     "recreate-postgres": "tsx src/scripts/recreatePostgresSchema.ts",
     "full-reset": "tsx src/scripts/fullReset.ts",
-    "migration:multiple-buildings": "tsx src/scripts/migrateMultipleBuildings.ts"
+    "migration:multiple-buildings": "tsx src/scripts/migrateMultipleBuildings.ts",
+    "migrate:tile-resources": "tsx src/scripts/migrateTileResources.ts"
   },
   "dependencies": {
     "@colyseus/core": "^0.15.0",

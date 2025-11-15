@@ -487,6 +487,7 @@ export class GameRoom extends Room<GameRoomState> {
       visibleKeys.forEach(key => {
         const tile = this.state.tiles.get(key);
         if (tile) {
+          const isOwned = tile.owner === userId;
           visibleTiles.push({
             key,
             q: tile.q,
@@ -494,7 +495,8 @@ export class GameRoom extends Room<GameRoomState> {
             biome: tile.biome,
             fertility: tile.fertility,
             owner: tile.owner,
-            resources: tile.resources.map(r => ({ type: r.type, amount: r.amount }))
+            // Ressourcen nur für eigene Tiles
+            resources: isOwned ? tile.resources.map(r => ({ type: r.type, amount: r.amount })) : []
           });
         }
       });

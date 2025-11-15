@@ -15,6 +15,7 @@ export interface ChunkData {
     biome: BiomeType;          // Biome-System
     fertility: number;         // Fruchtbarkeit 0-1
     resources?: Array<{ type: ResourceType; amount: number }>; // Mehrere Ressourcen
+    population?: number;       // Anzahl der Einwohner (0 wenn keine)
     // HINWEIS: 'owner' ist NICHT hier - wird in TileDataManager gespeichert!
   }>;
   lastModified: Date;
@@ -114,7 +115,8 @@ export class ChunkManager {
         biome: tile.biome as BiomeType,
         fertility: tile.fertility || 0.5,
         // owner wird NICHT gespeichert - siehe TileDataManager
-        resources: tile.resources.length > 0 ? tile.resources.map((r: any) => ({ type: r.type as ResourceType, amount: r.amount })) : undefined
+        resources: tile.resources.length > 0 ? tile.resources.map((r: any) => ({ type: r.type as ResourceType, amount: r.amount })) : undefined,
+        population: tile.population > 0 ? tile.population : undefined
       });
     });
 
@@ -132,6 +134,7 @@ export class ChunkManager {
         tile.r = tileData.r;
         tile.biome = tileData.biome;
         tile.fertility = tileData.fertility;
+        tile.population = tileData.population || 0;
         // owner wird NICHT aus Chunk geladen - siehe TileDataManager
         if (tileData.resources) {
           tileData.resources.forEach(res => {

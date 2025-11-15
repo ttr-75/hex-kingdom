@@ -134,6 +134,7 @@ export class VisibilitySystem {
     visibleKeys.forEach(key => {
       const tile = this.state.tiles.get(key);
       if (tile) {
+        const isOwned = tile.owner === playerUsername;
         visibleTiles.push({
           key,
           q: tile.q,
@@ -141,7 +142,8 @@ export class VisibilitySystem {
           biome: tile.biome,
           fertility: tile.fertility,
           owner: tile.owner,
-          resources: tile.resources.map(r => ({ type: r.type, amount: r.amount }))
+          // Ressourcen nur für eigene oder aktuell sichtbare Tiles
+          resources: isOwned ? tile.resources.map(r => ({ type: r.type, amount: r.amount })) : []
         });
       }
     });
@@ -155,6 +157,7 @@ export class VisibilitySystem {
             q: tile.q,
             r: tile.r,
             biome: tile.biome
+            // Keine Ressourcen für nur-erkundete Tiles!
           });
         }
       }

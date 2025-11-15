@@ -1,4 +1,4 @@
-import { Technology, TechnologyType } from './types';
+import { Technology, TechnologyType } from '../types';
 
 // ===========================
 // TECHNOLOGY DEFINITIONS

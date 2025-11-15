@@ -50,7 +50,8 @@ export enum BuildingType {
   WAREHOUSE = 'warehouse', // Erhöht Lager-Kapazität
   MARKETPLACE = 'marketplace', // Ermöglicht Handel
   BARRACKS = 'barracks',   // Rekrutiert Einheiten
-  RESEARCH_LAB = 'research_lab' // Ermöglicht Forschung
+  RESEARCH_LAB = 'research_lab', // Ermöglicht Forschung
+  RESIDENCE = 'residence'  // Beherbergt Einwohner
 }
 
 export interface Building {
@@ -72,6 +73,7 @@ export interface BuildingDefinition {
   constructionTime: number; // Sekunden
   maxLevel: number;
   upgradeMultiplier: number; // Kosten-Multiplikator pro Level
+  housingCapacity?: number; // Anzahl der Einwohner pro Level
 }
 
 // ===========================
@@ -270,6 +272,12 @@ export interface BiomeDefinition {
   
   // Welche Ressourcen können spawnen
   resourceSpawns: BiomeResourceSpawn[];
+  
+  // Bevölkerung die auf diesem Biom spawnen kann
+  populationSpawn?: {
+    probability: { min: number; max: number }; // Wahrscheinlichkeit 0-1
+    amount: { min: number; max: number };      // Anzahl der Einwohner
+  };
   
   // Visuelle Eigenschaften (für später)
   color?: string; // Hex color für Minimap

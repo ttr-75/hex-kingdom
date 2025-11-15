@@ -58,15 +58,19 @@ export class ExplorationSystem {
       if (client) {
         const exploreTiles = newlyVisible.map(coord => {
           const tile = this.state.tiles.get(hexToKey(coord));
-          return tile ? {
+          if (!tile) return null;
+          
+          const isOwned = tile.owner === playerUsername;
+          return {
             key: hexToKey(coord),
             q: tile.q,
             r: tile.r,
             biome: tile.biome,
             fertility: tile.fertility,
             owner: tile.owner,
-            resources: tile.resources.map(r => ({ type: r.type, amount: r.amount }))
-          } : null;
+            // Ressourcen nur für eigene Tiles
+            resources: isOwned ? tile.resources.map(r => ({ type: r.type, amount: r.amount })) : []
+          };
         }).filter(t => t !== null);
 
         client.send('newlyExplored', { tiles: exploreTiles });

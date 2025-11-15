@@ -28,28 +28,34 @@ export default function TileInfoTab({ tile, currentPlayer }: TileInfoTabProps) {
         </div>
       )}
 
-      {/* Ressourcen */}
-      {tile && tile.resources && tile.resources.length > 0 && (
+      {/* Ressourcen - nur für eigene Tiles sichtbar */}
+      {tile && (
         <div className="info-section">
           <h4>Ressourcen</h4>
-          <div className="resources-list">
-            {tile.resources.map((resource, idx) => (
-              <p key={idx} className="resource">
-                {RESOURCE_NAMES[resource.type] || resource.type}
-                {resource.amount > 0 && ` (${resource.amount.toFixed(0)} verfügbar)`}
-              </p>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Keine Ressourcen */}
-      {tile && (!tile.resources || tile.resources.length === 0) && (
-        <div className="info-section">
-          <h4>Ressourcen</h4>
-          <p className="resource">
-            Keine natürlichen Ressourcen
-          </p>
+          {isOwnedByPlayer ? (
+            // Eigene Tiles: Zeige Ressourcen oder "Keine"
+            <>
+              {tile.resources && tile.resources.length > 0 ? (
+                <div className="resources-list">
+                  {tile.resources.map((resource, idx) => (
+                    <p key={idx} className="resource">
+                      {RESOURCE_NAMES[resource.type] || resource.type}
+                      {resource.amount > 0 && ` (${resource.amount.toFixed(0)} verfügbar)`}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <p className="resource">
+                  Keine natürlichen Ressourcen
+                </p>
+              )}
+            </>
+          ) : (
+            // Fremde oder unbeanspruchte Tiles: Ressourcen nicht sichtbar
+            <p className="resource" style={{ fontStyle: 'italic' }}>
+              🔒 Ressourcen nicht erkennbar
+            </p>
+          )}
         </div>
       )}
 
@@ -69,6 +75,16 @@ export default function TileInfoTab({ tile, currentPlayer }: TileInfoTabProps) {
           <p className="fertility-text">
             {(tile.fertility * 100).toFixed(0)}% 
             {tile.fertility > 0.7 ? ' (Sehr fruchtbar)' : tile.fertility > 0.4 ? ' (Mäßig fruchtbar)' : ' (Unfruchtbar)'}
+          </p>
+        </div>
+      )}
+
+      {/* Bevölkerung */}
+      {tile && tile.population !== undefined && tile.population > 0 && (
+        <div className="info-section">
+          <h4>Bevölkerung</h4>
+          <p className="resource">
+            👥 {tile.population} Einwohner
           </p>
         </div>
       )}

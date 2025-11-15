@@ -212,4 +212,45 @@ export class BuildingRepository {
       client.release();
     }
   }
+
+  /**
+   * Übertrage alle Gebäude auf einem Tile zu neuem Besitzer
+   * (Wird verwendet bei Tile-Eroberung)
+   */
+  async transferBuildingsOnTile(q: number, r: number, newOwner: string): Promise<number> {
+    const result = await this.pool.query(
+      `UPDATE buildings 
+       SET owner = $3 
+       WHERE q = $1 AND r = $2
+       RETURNING id`,
+      [q, r, newOwner]
+    );
+    const count = result.rowCount || 0;
+    if (count > 0) {
+      console.log(`✅ Transferred ${count} building(s) on tile (${q},${r}) to ${newOwner}`);
+    }
+    return count;
+  }
+
+  /**
+   * Hole alle Gebäude auf einem Tile eines bestimmten Typs
+   */
+  async getBuildingsOfTypeOnTile(q: number, r: number, type: string): Promise<Building[]> {
+    const result = await this.pool.query<Building>(
+      'SELECT * FROM buildings WHERE q = $1 AND r = $2 AND type = $3',
+      [q, r, type]
+    );
+    return result.rows;
+  }
+
+  /**
+   * Lösche alle Gebäude auf einem Tile (für Testing/Reset)
+   */
+  async deleteBuildingsOnTile(q: number, r: number): Promise<number> {
+    const result = await this.pool.query(
+      'DELETE FROM buildings WHERE q = $1 AND r = $2',
+      [q, r]
+    );
+    return result.rowCount || 0;
+  }
 }

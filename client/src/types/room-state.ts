@@ -68,6 +68,7 @@ export interface HexTileState {
   fertility: number;      // Fruchtbarkeit 0-1
   owner: string;
   resources: TileResource[]; // Mehrere Ressourcen möglich
+  population?: number;    // Anzahl der Einwohner
 }
 
 export interface GameRoomState {

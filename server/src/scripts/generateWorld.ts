@@ -216,6 +216,38 @@ function getFertility(biome: BiomeType, q: number, r: number): number {
   return biomeDef.fertility.min + (rand * fertilityRange);
 }
 
+function getPopulation(biome: BiomeType, q: number, r: number): number {
+  const biomeDef = BIOME_DEFINITIONS[biome];
+
+  // Kein populationSpawn definiert = keine Bevölkerung
+  if (!biomeDef.populationSpawn) {
+    return 0;
+  }
+
+  // Verwende Koordinaten für deterministisches "Random"
+  const coordSeed = Math.abs(Math.sin(q * 91.234 + r * 67.891) * 34567.8901);
+  const rand = coordSeed - Math.floor(coordSeed);
+
+  // Interpoliere zwischen min und max probability
+  const probRange = biomeDef.populationSpawn.probability.max - biomeDef.populationSpawn.probability.min;
+  const coordSeed2 = Math.abs(Math.sin(q * 23.456 + r * 78.912) * 87654.3210);
+  const rand2 = coordSeed2 - Math.floor(coordSeed2);
+  const actualProb = biomeDef.populationSpawn.probability.min + (rand2 * probRange);
+
+  // Prüfe ob Bevölkerung spawnt
+  if (rand >= actualProb) {
+    return 0;
+  }
+
+  // Bestimme Anzahl
+  const amountRange = biomeDef.populationSpawn.amount.max - biomeDef.populationSpawn.amount.min;
+  const coordSeed3 = Math.abs(Math.sin(q * 56.789 + r * 34.567) * 98765.4321);
+  const rand3 = coordSeed3 - Math.floor(coordSeed3);
+  const amount = Math.floor(biomeDef.populationSpawn.amount.min + (rand3 * amountRange));
+
+  return amount;
+}
+
 // ===========================
 // FLUSS & SEE GENERATION
 // ===========================
@@ -442,6 +474,7 @@ async function generateWorld() {
         biome: BiomeType;
         fertility: number;
         resources: Array<{ type: ResourceType; amount: number }>;
+        population?: number;
       }>();
 
       const tileStartQ = chunkStartX * CONFIG.chunkSize;
@@ -457,6 +490,7 @@ async function generateWorld() {
         elevation: number;
         fertility: number;
         resources: Array<{ type: ResourceType; amount: number }>;
+        population?: number;
       }>();
 
       for (let q = tileStartQ; q <= tileEndQ; q++) {
@@ -465,6 +499,7 @@ async function generateWorld() {
           const elevation = elevationNoise(q, r, CONFIG.worldSeed);
           const fertility = getFertility(biome, q, r);
           const resources = getResourcesForBiome(biome, q, r);
+          const population = getPopulation(biome, q, r);
 
           tilesWithElevation.set(`${q},${r}`, {
             q,
@@ -472,7 +507,8 @@ async function generateWorld() {
             biome,
             elevation,
             fertility,
-            resources
+            resources,
+            population: population > 0 ? population : undefined
           });
 
           totalTiles++;
@@ -511,7 +547,8 @@ async function generateWorld() {
           r: tile.r,
           biome: tile.biome,
           fertility: tile.fertility,
-          resources: tile.resources
+          resources: tile.resources,
+          population: tile.population
         });
       });
 

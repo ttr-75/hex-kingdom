@@ -1,4 +1,4 @@
-import { BuildingType, BuildingDefinition } from './types';
+import { BuildingType, BuildingDefinition } from '../types';
 
 // ===========================
 // BUILDING DEFINITIONS
@@ -70,5 +70,15 @@ export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
     constructionTime: 150,
     maxLevel: 5,
     upgradeMultiplier: 1.8
+  },
+  [BuildingType.RESIDENCE]: {
+    type: BuildingType.RESIDENCE,
+    name: 'Wohnhaus',
+    description: 'Beherbergt Einwohner und erhöht die Bevölkerungskapazität',
+    baseCost: { wood: 60, stone: 40, food: 20 },
+    constructionTime: 70,
+    maxLevel: 10,
+    upgradeMultiplier: 1.5,
+    housingCapacity: 4 // 4 Einwohner pro Level
   }
 };
