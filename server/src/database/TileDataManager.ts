@@ -1,50 +1,35 @@
-import { MongoClient, Db, Collection } from 'mongodb';
-import { hexToKey } from '@hex-kingdom/shared';
 import { Pool } from 'pg';
 import { TileRepository } from './repositories/TileRepository.js';
+import { ChunkManager } from './ChunkManager.js';
 
 /**
  * TileDataManager - Hybrid Database System
  * 
- * STATISCHE DATEN (MongoDB Chunks via ChunkManager):
+ * STATISCHE WELT-DATEN (MongoDB Chunks via ChunkManager):
  * - Terrain/Biome
- * - Fertility
+ * - Fertility  
  * - Initial Resources (bei Map-Generierung)
  * - Initial Population (bei Map-Generierung)
+ * - Bleibt für UNCLAIMED Tiles die Source of Truth
  * 
- * DYNAMISCHE DATEN (PostgreSQL via TileRepository):
- * - Owner (tile_ownership)
- * - Resources (tile_resources) - nur für claimed Tiles
- * - Population (tile_population) - nur für claimed Tiles
+ * DYNAMISCHE SPIEL-DATEN (PostgreSQL via TileRepository):
+ * - Owner (tile_ownership) - NUR für claimed Tiles
+ * - Resources (tile_resources) - dynamisch, nur für claimed Tiles
+ * - Population (tile_population) - dynamisch, nur für claimed Tiles
  * - Buildings (buildings table)
  * 
  * WORKFLOW:
- * 1. Neues Tile wird geclaimed -> migrateStaticToDynamic()
- * 2. Ab dann: PostgreSQL = Source of Truth
- * 3. Tile-Besitzerwechsel -> nur owner in PostgreSQL ändern
+ * 1. Gesamte Map liegt in MongoDB Chunks (statisch)
+ * 2. Tile wird geclaimed -> claimTile() migriert Daten von MongoDB -> PostgreSQL
+ * 3. Ab dann: PostgreSQL = Source of Truth für dieses Tile
+ * 4. Unclaimed Tiles bleiben nur in MongoDB
  */
 
-export interface TileDynamicData {
-  _id: string;        // "q,r" format
-  q: number;
-  r: number;
-  owner?: string;     // Spieler-ID
-  buildingId?: string; // Referenz zu Building (wenn vorhanden)
-  lastModified: Date;
-}
-
 export class TileDataManager {
-  private client: MongoClient;
-  private db!: Db;
-  private tileDynamicData!: Collection<TileDynamicData>;
-  private connected = false;
   private tileRepository: TileRepository;
+  private chunkManager: ChunkManager;
 
-  constructor(
-    mongoUrl: string = 'mongodb://localhost:27017',
-    postgresPool?: Pool
-  ) {
-    this.client = new MongoClient(mongoUrl);
+  constructor(postgresPool?: Pool, chunkManager?: ChunkManager) {
     // Falls kein Pool übergeben wurde, erstelle einen neuen (sollte aber normalerweise übergeben werden)
     this.tileRepository = new TileRepository(
       postgresPool || new Pool({
@@ -55,45 +40,16 @@ export class TileDataManager {
         password: process.env.POSTGRES_PASSWORD || 'postgres'
       })
     );
-  }
-
-  async connect() {
-    if (this.connected) return;
     
-    try {
-      await this.client.connect();
-      this.db = this.client.db('hex-kingdom');
-      this.tileDynamicData = this.db.collection<TileDynamicData>('tile_dynamic_data');
-      
-      // Compound Index für Bereichsabfragen
-      await this.tileDynamicData.createIndex({ q: 1, r: 1 }, { unique: true });
-      
-      // Index für Owner-Abfragen
-      await this.tileDynamicData.createIndex({ owner: 1 });
-      
-      this.connected = true;
-      console.log('✅ TileDataManager verbunden');
-    } catch (error) {
-      console.error('❌ TileDataManager Verbindungsfehler:', error);
-      throw error;
-    }
-  }
-
-  async disconnect() {
-    await this.client.close();
-    this.connected = false;
+    // Falls kein ChunkManager übergeben wurde, erstelle einen neuen
+    this.chunkManager = chunkManager || new ChunkManager(
+      process.env.MONGO_URL || 'mongodb://localhost:27017'
+    );
   }
 
   // ===========================
-  // TILE OWNERSHIP
+  // TILE OWNERSHIP (Delegation)
   // ===========================
-
-  /**
-   * Setze Tile Owner (PostgreSQL)
-   */
-  async setTileOwner(q: number, r: number, owner: string): Promise<void> {
-    await this.tileRepository.setTileOwner(q, r, owner);
-  }
 
   /**
    * Entferne Tile Owner (PostgreSQL)
@@ -121,36 +77,82 @@ export class TileDataManager {
   // ===========================
 
   /**
-   * Claim Tile: Migriere statische Daten (MongoDB) -> dynamische Daten (PostgreSQL)
+   * 🎯 OFFIZIELL: Claim Tile für Spieler
+   * 
+   * LOGIK:
+   * 1. Prüfe ob Tile bereits in PostgreSQL existiert
+   *    - JA: Update Owner (re-claim oder Eroberung)
+   *    - NEIN: Lade aus MongoDB und migriere nach PostgreSQL
+   * 2. Setze Owner in PostgreSQL
+   * 3. Bei Erst-Claim: Migriere statische Daten (resources, population) aus MongoDB
    * 
    * @param q Tile Q-Koordinate
    * @param r Tile R-Koordinate
    * @param owner Neuer Besitzer
-   * @param staticData Statische Daten aus MongoDB Chunks (resources, population)
    */
   async claimTile(
     q: number,
     r: number,
-    owner: string,
-    staticData?: {
-      resources?: Array<{ type: string; amount: number }>;
-      population?: number;
-    }
+    owner: string
   ): Promise<void> {
-    // 1. Setze Owner in PostgreSQL
-    await this.tileRepository.setTileOwner(q, r, owner);
-
-    // 2. Migriere Resources (falls vorhanden)
-    if (staticData?.resources && staticData.resources.length > 0) {
-      await this.tileRepository.setTileResources(q, r, staticData.resources);
+    // 1. Prüfe ob Tile bereits in PostgreSQL existiert
+    const existingOwner = await this.tileRepository.getTileOwner(q, r);
+    
+    if (existingOwner) {
+      // Tile existiert bereits in PostgreSQL
+      if (existingOwner === owner) {
+        console.log(`ℹ️ Tile (${q},${r}) gehört bereits ${owner}`);
+        return;
+      }
+      
+      // Ownership-Wechsel (Eroberung oder Re-Claim)
+      console.log(`🔄 Tile (${q},${r}) Ownership-Wechsel: ${existingOwner} -> ${owner}`);
+      await this.tileRepository.setTileOwner(q, r, owner);
+      return;
     }
-
-    // 3. Migriere Population (falls vorhanden)
-    if (staticData?.population && staticData.population > 0) {
-      await this.tileRepository.setTilePopulation(q, r, staticData.population);
+    
+    // 2. Tile ist noch NICHT in PostgreSQL -> Erst-Claim, lade aus MongoDB
+    console.log(`📥 Tile (${q},${r}) wird aus MongoDB geladen für Erst-Claim...`);
+    
+    try {
+      // Stelle sicher dass ChunkManager verbunden ist
+      await this.chunkManager.connect();
+      
+      // Lade Tile aus MongoDB
+      const tileFromMongo = await this.chunkManager.getTile(q, r);
+      
+      if (!tileFromMongo) {
+        throw new Error(`Tile (${q},${r}) nicht in MongoDB gefunden!`);
+      }
+      
+      // Extrahiere statische Daten
+      const staticData: {
+        resources?: Array<{ type: string; amount: number }>;
+        population?: number;
+      } = {};
+      
+      // Resources aus MongoDB (falls vorhanden)
+      if (tileFromMongo.resources && tileFromMongo.resources.length > 0) {
+        staticData.resources = tileFromMongo.resources.map((res: { type: string; amount: number }) => ({
+          type: res.type,
+          amount: res.amount
+        }));
+      }
+      
+      // Population aus MongoDB (falls vorhanden)
+      if (tileFromMongo.population && tileFromMongo.population > 0) {
+        staticData.population = tileFromMongo.population;
+      }
+      
+      // 3. Migriere nach PostgreSQL mit statischen Daten
+      await this.tileRepository.claimTile(q, r, owner, staticData);
+      
+      console.log(`✅ Tile (${q},${r}) erfolgreich aus MongoDB migriert und von ${owner} geclaimt`);
+      
+    } catch (error) {
+      console.error(`❌ Fehler beim Laden von Tile (${q},${r}) aus MongoDB:`, error);
+      throw error;
     }
-
-    console.log(`✅ Tile (${q},${r}) claimed by ${owner}${staticData ? ' with static data migrated' : ''}`);
   }
 
   /**
@@ -174,112 +176,5 @@ export class TileDataManager {
     }
 
     console.log(`✅ Tile (${q},${r}) transferred to ${newOwner}`);
-  }
-
-  // ===========================
-  // TILE BUILDING LINKS
-  // ===========================
-
-  async setTileBuilding(q: number, r: number, buildingId: string): Promise<void> {
-    const key = hexToKey({ q, r });
-    await this.tileDynamicData.updateOne(
-      { _id: key },
-      { 
-        $set: { 
-          buildingId, 
-          q, 
-          r, 
-          lastModified: new Date() 
-        } 
-      },
-      { upsert: true }
-    );
-  }
-
-  async removeTileBuilding(q: number, r: number): Promise<void> {
-    const key = hexToKey({ q, r });
-    await this.tileDynamicData.updateOne(
-      { _id: key },
-      { 
-        $unset: { buildingId: "" },
-        $set: { lastModified: new Date() }
-      }
-    );
-  }
-
-  // ===========================
-  // BULK OPERATIONS
-  // ===========================
-
-  // Lade dynamische Daten für einen Bereich (z.B. Viewport)
-  async loadDynamicDataForRegion(
-    minQ: number, 
-    maxQ: number, 
-    minR: number, 
-    maxR: number
-  ): Promise<Map<string, TileDynamicData>> {
-    const data = await this.tileDynamicData
-      .find({
-        q: { $gte: minQ, $lte: maxQ },
-        r: { $gte: minR, $lte: maxR }
-      })
-      .toArray();
-    
-    const dataMap = new Map<string, TileDynamicData>();
-    data.forEach(tile => {
-      dataMap.set(tile._id, tile);
-    });
-    
-    return dataMap;
-  }
-
-  // Batch-Update für viele Tiles (z.B. bei Eroberung)
-  async batchSetOwner(tiles: Array<{ q: number; r: number }>, owner: string): Promise<void> {
-    const now = new Date();
-    const operations = tiles.map(({ q, r }) => ({
-      updateOne: {
-        filter: { _id: hexToKey({ q, r }) },
-        update: { 
-          $set: { owner, q, r, lastModified: now } 
-        },
-        upsert: true
-      }
-    }));
-    
-    if (operations.length > 0) {
-      await this.tileDynamicData.bulkWrite(operations);
-    }
-  }
-
-  // ===========================
-  // MAINTENANCE
-  // ===========================
-
-  // Lösche verwaiste Daten (Tiles ohne Owner UND ohne Building)
-  async cleanupOrphanedData(): Promise<number> {
-    const result = await this.tileDynamicData.deleteMany({
-      owner: { $exists: false },
-      buildingId: { $exists: false }
-    });
-    return result.deletedCount || 0;
-  }
-
-  // Statistiken
-  async getStats(): Promise<{
-    totalDynamicTiles: number;
-    ownedTiles: number;
-    tilesWithBuildings: number;
-  }> {
-    const [total, owned, withBuildings] = await Promise.all([
-      this.tileDynamicData.countDocuments(),
-      this.tileDynamicData.countDocuments({ owner: { $exists: true } }),
-      this.tileDynamicData.countDocuments({ buildingId: { $exists: true } })
-    ]);
-    
-    return {
-      totalDynamicTiles: total,
-      ownedTiles: owned,
-      tilesWithBuildings: withBuildings
-    };
   }
 }

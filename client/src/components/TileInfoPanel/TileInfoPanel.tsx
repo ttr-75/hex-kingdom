@@ -104,7 +104,13 @@ export default function TileInfoPanel({
           />
         )}
 
-        {activeTab === 'buildings' && (
+        {activeTab === 'buildings' && !currentPlayer && (
+          <div className="info-section">
+            <p className="info-message">⏳ Lade Spielerdaten...</p>
+          </div>
+        )}
+
+        {activeTab === 'buildings' && currentPlayer && (
           <BuildingsTab
             buildings={buildings}
             currentPlayer={currentPlayer}
@@ -112,7 +118,10 @@ export default function TileInfoPanel({
             onBuild={onBuild}
             onRecruitUnit={onRecruitUnit}
             showBuildMenu={showBuildMenu}
-            setShowBuildMenu={setShowBuildMenu}
+            setShowBuildMenu={(show) => {
+              console.log('📋 TileInfoPanel: setShowBuildMenu called', { show, currentPlayer: !!currentPlayer });
+              setShowBuildMenu(show);
+            }}
           />
         )}
 

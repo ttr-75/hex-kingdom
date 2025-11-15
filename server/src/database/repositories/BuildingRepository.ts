@@ -155,7 +155,7 @@ export class BuildingRepository {
    * Verwendet einen expliziten Client für atomare Operation
    */
   async buildBuildingTransaction(
-    owner: string,
+    _owner: string, // Owner wird nicht verwendet, da building.owner bereits gesetzt ist
     building: Omit<Building, 'created_at' | 'completed_at'>,
     _resourceCost: { wood?: number; stone?: number; iron?: number; gold?: number }
   ): Promise<Building> {
@@ -190,15 +190,6 @@ export class BuildingRepository {
           building.construction_start_time,
           building.construction_end_time
         ]
-      );
-
-      // 3. Setze Tile Owner (wenn noch nicht gesetzt)
-      await client.query(
-        `INSERT INTO tile_ownership (q, r, owner, last_modified)
-         VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (q, r) DO UPDATE 
-         SET owner = COALESCE(tile_ownership.owner, $3), last_modified = NOW()`,
-        [building.q, building.r, owner]
       );
 
       await client.query('COMMIT');

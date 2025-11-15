@@ -1,6 +1,6 @@
 import { BuildingType, UnitType } from '@hex-kingdom/shared';
 import { BuildingState, PlayerState } from '../../types/room-state';
-import { UNIT_DEFINITIONS } from '@hex-kingdom/shared/src/game-data';
+import { UNIT_DEFINITIONS, BUILDING_DEFINITIONS } from '@hex-kingdom/shared/src/game-data';
 
 interface BuildingsTabProps {
   buildings: BuildingState[];
@@ -11,26 +11,6 @@ interface BuildingsTabProps {
   showBuildMenu: boolean;
   setShowBuildMenu: (show: boolean) => void;
 }
-
-const BUILDING_NAMES: Record<string, string> = {
-  [BuildingType.LUMBERMILL]: '🪵 Sägewerk',
-  [BuildingType.MINE]: '⛏️ Bergwerk',
-  [BuildingType.FARM]: '🌾 Farm',
-  [BuildingType.WAREHOUSE]: '📦 Lagerhaus',
-  [BuildingType.MARKETPLACE]: '🏪 Marktplatz',
-  [BuildingType.BARRACKS]: '⚔️ Kaserne',
-  [BuildingType.RESEARCH_LAB]: '🔬 Forschungslabor'
-};
-
-const BUILDING_COSTS: Record<string, { wood?: number; stone?: number; iron?: number; gold?: number }> = {
-  [BuildingType.LUMBERMILL]: { wood: 30, stone: 25 },
-  [BuildingType.MINE]: { wood: 50, stone: 30 },
-  [BuildingType.FARM]: { wood: 40, stone: 20 },
-  [BuildingType.WAREHOUSE]: { wood: 60, stone: 40 },
-  [BuildingType.MARKETPLACE]: { wood: 80, stone: 60, gold: 50 },
-  [BuildingType.BARRACKS]: { wood: 100, stone: 80, iron: 40 },
-  [BuildingType.RESEARCH_LAB]: { wood: 120, stone: 100, gold: 80 }
-};
 
 export default function BuildingsTab({
   buildings,
@@ -43,13 +23,22 @@ export default function BuildingsTab({
 }: BuildingsTabProps) {
 
   const canAfford = (buildingType: BuildingType): boolean => {
-    if (!currentPlayer) return false;
-    const cost = BUILDING_COSTS[buildingType];
+    if (!currentPlayer) {
+      console.warn('⚠️ canAfford: currentPlayer is null/undefined');
+      return false;
+    }
+    const buildingDef = BUILDING_DEFINITIONS[buildingType];
+    if (!buildingDef || !buildingDef.baseCost) {
+      console.warn(`⚠️ canAfford: No definition or cost for building type: ${buildingType}`);
+      return false;
+    }
+    const cost = buildingDef.baseCost;
     return (
-      (cost.wood ?? 0) <= currentPlayer.wood &&
-      (cost.stone ?? 0) <= currentPlayer.stone &&
-      (cost.iron ?? 0) <= currentPlayer.iron &&
-      (cost.gold ?? 0) <= currentPlayer.gold
+      (cost.wood ?? 0) <= (currentPlayer.wood ?? 0) &&
+      (cost.stone ?? 0) <= (currentPlayer.stone ?? 0) &&
+      (cost.iron ?? 0) <= (currentPlayer.iron ?? 0) &&
+      (cost.gold ?? 0) <= (currentPlayer.gold ?? 0) &&
+      (cost.food ?? 0) <= (currentPlayer.food ?? 0)
     );
   };
 
@@ -66,7 +55,7 @@ export default function BuildingsTab({
               <div className="building-card">
                 <div className="building-header">
                   <span className="building-type">
-                    {BUILDING_NAMES[building.type] || building.type}
+                    {BUILDING_DEFINITIONS[building.type as BuildingType]?.icon} {BUILDING_DEFINITIONS[building.type as BuildingType]?.name || building.type}
                   </span>
                   <span className="building-level-badge">Lv. {building.level}</span>
                 </div>
@@ -163,7 +152,14 @@ export default function BuildingsTab({
           <h4>Aktionen</h4>
           <button 
             className="action-button build-action"
-            onClick={() => setShowBuildMenu(!showBuildMenu)}
+            onClick={() => {
+              if (!currentPlayer) {
+                console.error('❌ Cannot open build menu: currentPlayer is null');
+                return;
+              }
+              console.log('🏗️ Opening build menu, currentPlayer:', currentPlayer);
+              setShowBuildMenu(!showBuildMenu);
+            }}
           >
             <span className="action-icon">🏗️</span>
             <span className="action-label">Bauen</span>
@@ -172,7 +168,7 @@ export default function BuildingsTab({
       )}
 
       {/* Build Menu Popup */}
-      {showBuildMenu && canBuild && (
+      {showBuildMenu && canBuild && currentPlayer && (
         <>
           <div className="build-menu-overlay" onClick={() => setShowBuildMenu(false)} />
           <div className="build-menu-popup">
@@ -182,7 +178,8 @@ export default function BuildingsTab({
             </div>
             <div className="build-menu-content">
               {Object.values(BuildingType).map((buildingType) => {
-                const cost = BUILDING_COSTS[buildingType];
+                const buildingDef = BUILDING_DEFINITIONS[buildingType];
+                const cost = buildingDef?.baseCost;
                 const affordable = canAfford(buildingType);
                 
                 return (
@@ -199,13 +196,14 @@ export default function BuildingsTab({
                   >
                     <div className="build-button-content">
                       <span className="build-button-name">
-                        {BUILDING_NAMES[buildingType]}
+                        {buildingDef?.icon} {buildingDef?.name || buildingType}
                       </span>
                       <span className="build-button-cost">
-                        {cost.wood && <span className={`cost-item ${currentPlayer && cost.wood > currentPlayer.wood ? 'insufficient' : ''}`}>🪵 {cost.wood}</span>}
-                        {cost.stone && <span className={`cost-item ${currentPlayer && cost.stone > currentPlayer.stone ? 'insufficient' : ''}`}>🪨 {cost.stone}</span>}
-                        {cost.iron && <span className={`cost-item ${currentPlayer && cost.iron > currentPlayer.iron ? 'insufficient' : ''}`}>⚔️ {cost.iron}</span>}
-                        {cost.gold && <span className={`cost-item ${currentPlayer && cost.gold > currentPlayer.gold ? 'insufficient' : ''}`}>💰 {cost.gold}</span>}
+                        {cost?.wood && <span className={`cost-item ${currentPlayer && cost.wood > (currentPlayer.wood ?? 0) ? 'insufficient' : ''}`}>🪵 {cost.wood}</span>}
+                        {cost?.stone && <span className={`cost-item ${currentPlayer && cost.stone > (currentPlayer.stone ?? 0) ? 'insufficient' : ''}`}>🪨 {cost.stone}</span>}
+                        {cost?.iron && <span className={`cost-item ${currentPlayer && cost.iron > (currentPlayer.iron ?? 0) ? 'insufficient' : ''}`}>⚔️ {cost.iron}</span>}
+                        {cost?.gold && <span className={`cost-item ${currentPlayer && cost.gold > (currentPlayer.gold ?? 0) ? 'insufficient' : ''}`}>💰 {cost.gold}</span>}
+                        {cost?.food && <span className={`cost-item ${currentPlayer && cost.food > (currentPlayer.food ?? 0) ? 'insufficient' : ''}`}>🌾 {cost.food}</span>}
                       </span>
                     </div>
                   </button>

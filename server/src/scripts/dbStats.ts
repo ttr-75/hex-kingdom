@@ -2,13 +2,13 @@
 /**
  * Database Statistics Script
  * 
- * Zeigt Statistiken über die MongoDB-Datenbank an
+ * Zeigt Statistiken über MongoDB und PostgreSQL an
  * Nutzung: npm run db-stats
  */
 
 import { ChunkManager } from '../database/ChunkManager.js';
-import { TileDataManager } from '../database/TileDataManager.js';
 import { MongoClient } from 'mongodb';
+import { Pool } from 'pg';
 
 async function showStats() {
   console.log('📊 Hex Kingdom - Database Statistics\n');
@@ -45,49 +45,64 @@ async function showStats() {
     console.log(`   Total Size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
     console.log('');
     
-    // TileDataManager Stats
-    const tileDataManager = new TileDataManager(mongoUrl);
-    await tileDataManager.connect();
+    // PostgreSQL Stats
+    const pgPool = new Pool({
+      host: process.env.POSTGRES_HOST || 'localhost',
+      port: parseInt(process.env.POSTGRES_PORT || '5432'),
+      database: process.env.POSTGRES_DB || 'hex_kingdom',
+      user: process.env.POSTGRES_USER || 'hex_user',
+      password: process.env.POSTGRES_PASSWORD || 'hex_pass_dev'
+    });
     
-    const dynamicStats = await tileDataManager.getStats();
-    
-    console.log('🔄 Dynamic Data (TileDynamicData Collection):');
-    console.log(`   Total Dynamic Tiles: ${dynamicStats.totalDynamicTiles.toLocaleString()}`);
-    console.log(`   Owned Tiles: ${dynamicStats.ownedTiles.toLocaleString()}`);
-    console.log(`   Tiles with Buildings: ${dynamicStats.tilesWithBuildings.toLocaleString()}`);
-    
-    const dynamicDataStats: any = await db.command({ collStats: 'tile_dynamic_data' }).catch(() => null);
-    if (dynamicDataStats) {
-      console.log(`   Total Size: ${(dynamicDataStats.size / 1024 / 1024).toFixed(2)} MB`);
-    }
-    console.log('');
-    
-    // Buildings
-    const buildingsCollection = db.collection('buildings');
-    const totalBuildings = await buildingsCollection.countDocuments().catch(() => 0);
-    
-    console.log('🏗️  Buildings:');
-    console.log(`   Total: ${totalBuildings.toLocaleString()}`);
-    console.log('');
-    
-    // Efficiency Ratio
-    const efficiency = dynamicStats.totalDynamicTiles / estimatedTotalTiles * 100;
-    console.log('📈 Efficiency:');
-    console.log(`   Dynamic/Static Ratio: ${efficiency.toFixed(2)}%`);
-    console.log(`   (Lower is better - only changed tiles stored dynamically)`);
-    console.log('');
-    
-    // Cleanup suggestion
-    if (dynamicStats.totalDynamicTiles > dynamicStats.ownedTiles + dynamicStats.tilesWithBuildings) {
-      const orphaned = dynamicStats.totalDynamicTiles - dynamicStats.ownedTiles - dynamicStats.tilesWithBuildings;
-      console.log('⚠️  Maintenance:');
-      console.log(`   ${orphaned} orphaned dynamic tiles could be cleaned up`);
-      console.log(`   Run: npm run db-cleanup`);
+    try {
+      const ownedTilesResult = await pgPool.query(
+        'SELECT COUNT(*) as count FROM tile_ownership WHERE owner IS NOT NULL'
+      );
+      const totalTilesResult = await pgPool.query(
+        'SELECT COUNT(*) as count FROM tile_ownership'
+      );
+      const tilesWithResourcesResult = await pgPool.query(
+        'SELECT COUNT(DISTINCT (q, r)) as count FROM tile_resources'
+      );
+      const tilesWithPopulationResult = await pgPool.query(
+        'SELECT COUNT(*) as count FROM tile_population'
+      );
+      
+      console.log('🔄 Dynamic Data (PostgreSQL):');
+      console.log(`   Total Tiles in DB: ${parseInt(totalTilesResult.rows[0].count).toLocaleString()}`);
+      console.log(`   Owned Tiles: ${parseInt(ownedTilesResult.rows[0].count).toLocaleString()}`);
+      console.log(`   Tiles with Resources: ${parseInt(tilesWithResourcesResult.rows[0].count).toLocaleString()}`);
+      console.log(`   Tiles with Population: ${parseInt(tilesWithPopulationResult.rows[0].count).toLocaleString()}`);
       console.log('');
+      
+      await pgPool.end();
+    } catch (error) {
+      console.error('⚠️ PostgreSQL stats not available:', error);
+    }
+    
+    // Buildings from PostgreSQL
+    const pgPool2 = new Pool({
+      host: process.env.POSTGRES_HOST || 'localhost',
+      port: parseInt(process.env.POSTGRES_PORT || '5432'),
+      database: process.env.POSTGRES_DB || 'hex_kingdom',
+      user: process.env.POSTGRES_USER || 'hex_user',
+      password: process.env.POSTGRES_PASSWORD || 'hex_pass_dev'
+    });
+    
+    try {
+      const buildingsResult = await pgPool2.query('SELECT COUNT(*) as count FROM buildings');
+      const totalBuildings = parseInt(buildingsResult.rows[0].count);
+      
+      console.log('🏗️  Buildings (PostgreSQL):');
+      console.log(`   Total: ${totalBuildings.toLocaleString()}`);
+      console.log('');
+      
+      await pgPool2.end();
+    } catch (error) {
+      console.error('⚠️ Buildings stats not available:', error);
     }
     
     await chunkManager.disconnect();
-    await tileDataManager.disconnect();
     
   } catch (error) {
     console.error('❌ Error:', error);

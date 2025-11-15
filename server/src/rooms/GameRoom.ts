@@ -181,6 +181,17 @@ export class GameRoom extends Room<GameRoomState> {
       player.storageFish = redisSession.storageFish;
       player.currentResearch = redisSession.currentResearch || '';
       
+      // Prüfe ob Spieler in PostgreSQL existiert (für Foreign Keys)
+      const existingPlayer = await this.postgres.getPlayer(persistentId);
+      if (!existingPlayer) {
+        console.log(`🆕 Erstelle Player ${persistentId} in PostgreSQL (Redis-Reconnect)`);
+        try {
+          await this.postgres.createPlayer(persistentId, player.color);
+        } catch (error) {
+          console.error(`❌ Fehler beim Erstellen von Player ${persistentId}:`, error);
+        }
+      }
+      
       // Extend Session TTL
       await this.redis.keepPlayerSessionAlive(persistentId);
     } else {
@@ -191,20 +202,40 @@ export class GameRoom extends Room<GameRoomState> {
         console.log(`👤 ${persistentId} returning player - lade von PostgreSQL`);
         player.color = existingPlayer.color;
         
-        // Startressourcen für returning player (TODO: später aus separater Resources-Tabelle)
-        player.wood = STARTING_RESOURCES.wood;
-        player.stone = STARTING_RESOURCES.stone;
-        player.iron = STARTING_RESOURCES.iron;
-        player.gold = STARTING_RESOURCES.gold;
-        player.food = STARTING_RESOURCES.food;
-        player.fish = STARTING_RESOURCES.fish;
-        
-        player.storageWood = STARTING_STORAGE_CAPACITY.wood;
-        player.storageStone = STARTING_STORAGE_CAPACITY.stone;
-        player.storageIron = STARTING_STORAGE_CAPACITY.iron;
-        player.storageGold = STARTING_STORAGE_CAPACITY.gold;
-        player.storageFood = STARTING_STORAGE_CAPACITY.food;
-        player.storageFish = STARTING_STORAGE_CAPACITY.fish;
+        // Lade gespeicherte Resources aus PostgreSQL
+        const savedResources = await this.postgres.getPlayerResources(persistentId);
+        if (savedResources) {
+          console.log(`💰 Lade gespeicherte Resources für ${persistentId}`);
+          player.wood = Number(savedResources.wood);
+          player.stone = Number(savedResources.stone);
+          player.iron = Number(savedResources.iron);
+          player.gold = Number(savedResources.gold);
+          player.food = Number(savedResources.food);
+          player.fish = Number(savedResources.fish);
+          
+          player.storageWood = savedResources.storage_wood;
+          player.storageStone = savedResources.storage_stone;
+          player.storageIron = savedResources.storage_iron;
+          player.storageGold = savedResources.storage_gold;
+          player.storageFood = savedResources.storage_food;
+          player.storageFish = savedResources.storage_fish;
+        } else {
+          // Kein gespeicherter Stand → Startressourcen
+          console.log(`🆕 Keine gespeicherten Resources → Startressourcen für ${persistentId}`);
+          player.wood = STARTING_RESOURCES.wood;
+          player.stone = STARTING_RESOURCES.stone;
+          player.iron = STARTING_RESOURCES.iron;
+          player.gold = STARTING_RESOURCES.gold;
+          player.food = STARTING_RESOURCES.food;
+          player.fish = STARTING_RESOURCES.fish;
+          
+          player.storageWood = STARTING_STORAGE_CAPACITY.wood;
+          player.storageStone = STARTING_STORAGE_CAPACITY.stone;
+          player.storageIron = STARTING_STORAGE_CAPACITY.iron;
+          player.storageGold = STARTING_STORAGE_CAPACITY.gold;
+          player.storageFood = STARTING_STORAGE_CAPACITY.food;
+          player.storageFish = STARTING_STORAGE_CAPACITY.fish;
+        }
         
         // Update lastLogin
         await this.postgres.updatePlayerLogin(persistentId);
@@ -400,6 +431,19 @@ export class GameRoom extends Room<GameRoomState> {
     
     if (isAdmin) {
       // Admin sieht alles (keine Exploration nötig)
+      // Lade Population für alle beanspruchten Tiles aus PostgreSQL
+      const populationMap = new Map<string, number>();
+      for (const [key, tile] of this.state.tiles) {
+        if (tile.owner) {
+          try {
+            const population = await this.postgres.getTilePopulation(tile.q, tile.r);
+            populationMap.set(key, population);
+          } catch (error) {
+            console.error(`Failed to load population for tile (${tile.q}, ${tile.r}):`, error);
+          }
+        }
+      }
+      
       this.state.tiles.forEach((tile, key) => {
         visibleTiles.push({
           key,
@@ -408,7 +452,8 @@ export class GameRoom extends Room<GameRoomState> {
           biome: tile.biome,
           fertility: tile.fertility,
           owner: tile.owner,
-          resources: tile.resources.map(r => ({ type: r.type, amount: r.amount }))
+          resources: tile.resources.map(r => ({ type: r.type, amount: r.amount })),
+          population: populationMap.get(key) !== undefined ? populationMap.get(key) : tile.population
         });
       });
     } else {
@@ -483,6 +528,20 @@ export class GameRoom extends Room<GameRoomState> {
         exploredFromDB.map(t => hexToKey({ q: t.q, r: t.r }))
       );
       
+      // Lade Population für alle beanspruchten sichtbaren Tiles aus PostgreSQL
+      const populationMap = new Map<string, number>();
+      for (const key of visibleKeys) {
+        const tile = this.state.tiles.get(key);
+        if (tile && tile.owner) {
+          try {
+            const population = await this.postgres.getTilePopulation(tile.q, tile.r);
+            populationMap.set(key, population);
+          } catch (error) {
+            console.error(`Failed to load population for tile (${tile.q}, ${tile.r}):`, error);
+          }
+        }
+      }
+      
       // 6. Sammle sichtbare Tiles
       visibleKeys.forEach(key => {
         const tile = this.state.tiles.get(key);
@@ -496,7 +555,9 @@ export class GameRoom extends Room<GameRoomState> {
             fertility: tile.fertility,
             owner: tile.owner,
             // Ressourcen nur für eigene Tiles
-            resources: isOwned ? tile.resources.map(r => ({ type: r.type, amount: r.amount })) : []
+            resources: isOwned ? tile.resources.map(r => ({ type: r.type, amount: r.amount })) : [],
+            // Population nur für eigene Tiles
+            population: isOwned && populationMap.has(key) ? populationMap.get(key) : undefined
           });
         }
       });
@@ -552,21 +613,9 @@ export class GameRoom extends Room<GameRoomState> {
     if (player) {
       console.log(`👋 ${player.username} hat verlassen`);
       
-      // Sync: Redis (führend) → PostgreSQL (persistent backup)
-      this.redis.getPlayerSession(player.username).then(async (redisSession: any) => {
-        if (redisSession) {
-          // Speichere finale Werte aus Redis
-          console.log(`💾 Syncing ${player.username}: Redis → PostgreSQL`);
-          
-          // TODO: Resources-Tabelle in PostgreSQL hinzufügen
-          // Aktuell speichern wir nur in Redis (Live) + PostgreSQL (Player)
-          
-          // Lösche Redis-Session
-          await this.redis.deletePlayerSession(player.username);
-          console.log(`✅ Redis → PostgreSQL sync completed for ${player.username}`);
-        }
-      }).catch((err: any) => {
-        console.error(`❌ Failed to sync player data for ${player.username}:`, err);
+      // Sync: RAM → PostgreSQL (persistent backup)
+      this.savePlayerDataOnLeave(player).catch((err: any) => {
+        console.error(`❌ Failed to save player data for ${player.username}:`, err);
       });
       
       // Speichere Building-States in PostgreSQL
@@ -626,6 +675,49 @@ export class GameRoom extends Room<GameRoomState> {
 
   onDispose() {
     console.log(`🗑️ GameRoom ${this.roomId} geschlossen`);
+  }
+
+  // ===========================
+  // PERSISTENCE
+  // ===========================
+
+  /**
+   * Speichere alle Player-Daten beim Verlassen
+   */
+  private async savePlayerDataOnLeave(player: any): Promise<void> {
+    const username = player.username;
+    
+    console.log(`💾 Speichere Daten für ${username}...`);
+    
+    // 1. Speichere Resources in PostgreSQL
+    try {
+      await this.postgres.savePlayerResources({
+        username: username,
+        wood: player.wood,
+        stone: player.stone,
+        iron: player.iron,
+        gold: player.gold,
+        food: player.food,
+        fish: player.fish,
+        storageWood: player.storageWood,
+        storageStone: player.storageStone,
+        storageIron: player.storageIron,
+        storageGold: player.storageGold,
+        storageFood: player.storageFood,
+        storageFish: player.storageFish
+      });
+      console.log(`✅ Resources gespeichert für ${username}`);
+    } catch (error) {
+      console.error(`❌ Fehler beim Speichern der Resources für ${username}:`, error);
+    }
+    
+    // 2. Lösche Redis-Session
+    try {
+      await this.redis.deletePlayerSession(username);
+      console.log(`✅ Redis-Session gelöscht für ${username}`);
+    } catch (error) {
+      console.error(`❌ Fehler beim Löschen der Redis-Session für ${username}:`, error);
+    }
   }
 
   // ===========================
@@ -915,13 +1007,13 @@ export class GameRoom extends Room<GameRoomState> {
     
     // Async: Speichere in DB (fire & forget)
     if (tilesToOwn.length > 0) {
-      // Batch set tile ownership in PostgreSQL
+      // 🎯 Verwende claimTile() für konsistentes Tile-Claiming
       Promise.all(
         tilesToOwn.map(tile => 
-          this.postgres.setTileOwner(tile.q, tile.r, playerId)
+          this.postgres.claimTile(tile.q, tile.r, playerId)
         )
       ).catch(err => {
-        console.error('Failed to save tile ownership:', err);
+        console.error('Failed to claim tiles:', err);
       });
     }
     

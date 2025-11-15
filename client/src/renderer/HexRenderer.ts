@@ -428,17 +428,21 @@ export class HexRenderer {
         graphics = new PIXI.Graphics();
         this.mapContainer.addChild(graphics);
         this.tiles.set(key, graphics);
+        
+        // Draw the new tile
+        this.drawHexagon(graphics, pixel.x, pixel.y, color, shadowColor);
       } else if (forceRedraw) {
         // OPTIMIZED: Clear and redraw existing graphics
         updatedTileCount++;
         graphics.clear();
         graphics.visible = true;
+        this.drawHexagon(graphics, pixel.x, pixel.y, color, shadowColor);
       } else {
-        // Existing tile, skip if not forcing redraw
+        // Existing tile - still visible, no need to redraw
+        graphics.visible = true;
+        // Skip redrawing but keep it visible
         return;
       }
-      
-      this.drawHexagon(graphics, pixel.x, pixel.y, color, shadowColor);
       
       // Resource node indicator (use new resources array format)
       // Only show resources on visible (non-explored-only) tiles

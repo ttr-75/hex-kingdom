@@ -112,6 +112,73 @@ export class TileRepository {
   /**
    * Setze Tile Owner (UPSERT)
    */
+  /**
+   * 🎯 OFFIZIELL: Tile für Spieler claimen
+   * 
+   * Prüft ob Tile bereits einen Owner hat:
+   * - Wenn KEIN Owner: Setze neuen Owner und migriere Daten
+   * - Wenn OWNER existiert: Werfe Fehler (Tile schon vergeben)
+   * 
+   * @throws Error wenn Tile bereits einem anderen Spieler gehört
+   */
+  async claimTile(
+    q: number,
+    r: number,
+    owner: string,
+    staticData?: {
+      resources?: Array<{ type: string; amount: number }>;
+      population?: number;
+    }
+  ): Promise<void> {
+    const client = await this.pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      // 1. Prüfe ob Tile bereits einen Owner hat
+      const existingOwner = await client.query<TileOwnership>(
+        'SELECT owner FROM tile_ownership WHERE q = $1 AND r = $2',
+        [q, r]
+      );
+      
+      if (existingOwner.rows.length > 0 && existingOwner.rows[0].owner) {
+        throw new Error(`Tile (${q},${r}) gehört bereits ${existingOwner.rows[0].owner}`);
+      }
+      
+      // 2. Setze Owner
+      await client.query(
+        `INSERT INTO tile_ownership (q, r, owner, last_modified)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (q, r) DO UPDATE 
+         SET owner = $3, last_modified = NOW()`,
+        [q, r, owner]
+      );
+      
+      // 3. Migriere Resources (falls vorhanden)
+      if (staticData?.resources && staticData.resources.length > 0) {
+        await this.setTileResources(q, r, staticData.resources);
+      }
+      
+      // 4. Migriere Population (falls vorhanden)
+      if (staticData?.population && staticData.population > 0) {
+        await this.setTilePopulation(q, r, staticData.population);
+      }
+      
+      await client.query('COMMIT');
+      console.log(`✅ Tile (${q},${r}) claimed by ${owner}${staticData ? ' with static data migrated' : ''}`);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * ⚠️ INTERNAL: Setze/Update Tile Owner ohne Prüfungen
+   * Verwende claimTile() für neue Tile-Übernahme!
+   * Diese Methode wird für Transfers/Updates verwendet.
+   */
   async setTileOwner(q: number, r: number, owner: string): Promise<void> {
     await this.pool.query(
       `INSERT INTO tile_ownership (q, r, owner, last_modified)
@@ -298,7 +365,7 @@ export class TileRepository {
         });
 
         await client.query(
-          `INSERT INTO tile_resources (q, r, resource_type, amount, last_modified)
+          `INSERT INTO tile_resources (q, r, resource_type, amount)
            VALUES ${placeholders.join(', ')}`,
           values
         );

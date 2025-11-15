@@ -77,7 +77,8 @@ export const BIOME_DEFINITIONS: Record<BiomeType, BiomeDefinition> = {
       }
     ],
     populationSpawn: {
-      probability: { min: 0.15, max: 0.3 }, // 15-30% Wahrscheinlichkeit
+      probability: { min: 0.15, max: 0.5 }, // 15-50
+      // % Wahrscheinlichkeit
       amount: { min: 2, max: 10 }            // 2-10 Einwohner
     },
     color: '#7cb342'

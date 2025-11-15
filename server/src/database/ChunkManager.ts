@@ -90,6 +90,23 @@ export class ChunkManager {
     return await this.chunks.find({ _id: { $in: chunkIds } }).toArray();
   }
 
+  /**
+   * Lade ein einzelnes Tile aus MongoDB
+   * Nützlich für claimTile() um statische Daten zu migrieren
+   */
+  async getTile(q: number, r: number): Promise<ChunkData['tiles'][0] | null> {
+    const { chunkX, chunkY } = this.getChunkCoords(q, r);
+    const chunk = await this.loadChunk(chunkX, chunkY);
+    
+    if (!chunk) {
+      return null;
+    }
+    
+    // Finde das Tile im Chunk
+    const tile = chunk.tiles.find(t => t.q === q && t.r === r);
+    return tile || null;
+  }
+
   // Konvertiere HexTileState Map zu ChunkData
   tilesToChunkData(tiles: Map<string, HexTileState>): Map<string, ChunkData> {
     const chunksMap = new Map<string, ChunkData>();

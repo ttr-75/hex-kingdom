@@ -3,8 +3,7 @@ import { GameRoomState, BuildingState } from '../GameRoomState.js';
 import { PostgresManager } from '../../database/PostgresManager.js';
 import {
   BUILDING_DEFINITIONS,
-  BuildCommand,
-  hexToKey
+  BuildCommand
 } from '@hex-kingdom/shared';
 
 const TIME_MULTIPLIER = parseFloat(process.env.TIME_MULTIPLIER || '1') || 1;
@@ -45,7 +44,16 @@ export class BuildingHandler {
       return;
     }
     
-    const tileKey = hexToKey(command.position);
+    // 🔒 WICHTIG: Prüfe Tile Ownership - man darf nur auf eigenen Tiles bauen!
+    const tileOwner = await this.postgres.getTileOwner(command.position.q, command.position.r);
+    if (!tileOwner) {
+      client.send('error', { message: 'Dieses Tile gehört niemandem. Claime es zuerst!' });
+      return;
+    }
+    if (tileOwner !== player.username) {
+      client.send('error', { message: 'Du kannst nur auf deinen eigenen Tiles bauen!' });
+      return;
+    }
     
     // Prüfe Anzahl der Gebäude auf diesem Tile
     const existingBuildings = Array.from(this.state.buildings.values()).filter(
@@ -103,10 +111,7 @@ export class BuildingHandler {
       
       this.state.buildings.set(building.id, building);
       
-      const tile = this.state.tiles.get(tileKey);
-      if (tile) {
-        tile.owner = player.username;
-      }
+      // Owner wird NICHT hier gesetzt - Tile muss vorher bereits geclaimt sein!
     } catch (err) {
       console.error('❌ Failed to save building to DB:', err);
       

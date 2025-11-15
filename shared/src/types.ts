@@ -67,6 +67,7 @@ export interface Building {
 export interface BuildingDefinition {
   type: BuildingType;
   name: string;
+  icon: string; // Emoji für die UI
   description: string;
   baseCost: Partial<Resources>;
   baseProduction?: Partial<Resources>; // Pro Sekunde

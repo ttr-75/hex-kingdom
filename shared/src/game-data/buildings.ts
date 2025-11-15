@@ -8,6 +8,7 @@ export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
   [BuildingType.MINE]: {
     type: BuildingType.MINE,
     name: 'Bergwerk',
+    icon: '⛏️',
     description: 'Fördert Stein und Eisen aus dem Boden',
     baseCost: { wood: 50, stone: 30 },
     baseProduction: { stone: 0.5, iron: 0.2 }, // Pro Sekunde
@@ -18,6 +19,7 @@ export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
   [BuildingType.FARM]: {
     type: BuildingType.FARM,
     name: 'Farm',
+    icon: '🌾',
     description: 'Produziert Nahrung für die Bevölkerung',
     baseCost: { wood: 40, stone: 20 },
     baseProduction: { food: 0.8 },
@@ -28,6 +30,7 @@ export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
   [BuildingType.LUMBERMILL]: {
     type: BuildingType.LUMBERMILL,
     name: 'Sägewerk',
+    icon: '🪵',
     description: 'Verarbeitet Holz aus umliegenden Wäldern',
     baseCost: { wood: 30, stone: 25 },
     baseProduction: { wood: 1.0 },
@@ -38,6 +41,7 @@ export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
   [BuildingType.WAREHOUSE]: {
     type: BuildingType.WAREHOUSE,
     name: 'Lagerhaus',
+    icon: '📦',
     description: 'Erhöht die Lagerkapazität für Ressourcen',
     baseCost: { wood: 60, stone: 40 },
     constructionTime: 50,
@@ -47,6 +51,7 @@ export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
   [BuildingType.MARKETPLACE]: {
     type: BuildingType.MARKETPLACE,
     name: 'Marktplatz',
+    icon: '🏪',
     description: 'Ermöglicht Handel mit anderen Spielern',
     baseCost: { wood: 80, stone: 60, gold: 50 },
     constructionTime: 90,
@@ -56,6 +61,7 @@ export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
   [BuildingType.BARRACKS]: {
     type: BuildingType.BARRACKS,
     name: 'Kaserne',
+    icon: '⚔️',
     description: 'Rekrutiert und trainiert militärische Einheiten',
     baseCost: { wood: 100, stone: 80, iron: 40 },
     constructionTime: 120,
@@ -65,6 +71,7 @@ export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
   [BuildingType.RESEARCH_LAB]: {
     type: BuildingType.RESEARCH_LAB,
     name: 'Forschungslabor',
+    icon: '🔬',
     description: 'Erforscht neue Technologien',
     baseCost: { wood: 120, stone: 100, gold: 80 },
     constructionTime: 150,
@@ -74,6 +81,7 @@ export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
   [BuildingType.RESIDENCE]: {
     type: BuildingType.RESIDENCE,
     name: 'Wohnhaus',
+    icon: '🏠',
     description: 'Beherbergt Einwohner und erhöht die Bevölkerungskapazität',
     baseCost: { wood: 60, stone: 40, food: 20 },
     constructionTime: 70,

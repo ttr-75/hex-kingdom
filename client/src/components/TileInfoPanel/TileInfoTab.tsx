@@ -79,8 +79,8 @@ export default function TileInfoTab({ tile, currentPlayer }: TileInfoTabProps) {
         </div>
       )}
 
-      {/* Bevölkerung */}
-      {tile && tile.population !== undefined && tile.population > 0 && (
+      {/* Bevölkerung - Zeige auch wenn 0, aber nur für eigene Tiles */}
+      {tile && isOwnedByPlayer && tile.population !== undefined && (
         <div className="info-section">
           <h4>Bevölkerung</h4>
           <p className="resource">

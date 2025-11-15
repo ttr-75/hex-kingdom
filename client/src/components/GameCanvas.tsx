@@ -23,6 +23,21 @@ export default function GameCanvas() {
   
   const currentPlayer = sessionId ? players.get(sessionId) ?? null : null;
   
+  // Debug logging for currentPlayer
+  useEffect(() => {
+    console.log('👤 GameCanvas: currentPlayer state', { 
+      sessionId, 
+      hasPlayer: !!currentPlayer,
+      playerCount: players.size,
+      playerKeys: Array.from(players.keys()),
+      currentPlayer: currentPlayer ? {
+        username: currentPlayer.username,
+        wood: currentPlayer.wood,
+        stone: currentPlayer.stone
+      } : null
+    });
+  }, [sessionId, currentPlayer, players]);
+  
   // Initialize renderer
   useEffect(() => {
     if (canvasRef.current && !rendererRef.current) {
@@ -121,7 +136,8 @@ export default function GameCanvas() {
           biome: tileData.biome,
           fertility: tileData.fertility ?? 0.5,
           owner: tileData.owner,
-          resources: tileData.resources || []
+          resources: tileData.resources || [],
+          population: tileData.population !== undefined ? tileData.population : 0
         });
       });
       
@@ -157,7 +173,8 @@ export default function GameCanvas() {
           biome: tileData.biome,
           fertility: tileData.fertility ?? 0.5,
           owner: tileData.owner,
-          resources: tileData.resources || []
+          resources: tileData.resources || [],
+          population: tileData.population !== undefined ? tileData.population : 0
         });
       });
       

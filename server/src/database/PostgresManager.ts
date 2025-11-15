@@ -3,6 +3,8 @@ import { PlayerRepository, Player } from './repositories/PlayerRepository';
 import { BuildingRepository, Building, TileOwnership } from './repositories/BuildingRepository';
 import { UnitRepository, Unit, UnitMovement } from './repositories/UnitRepository';
 import { TileRepository } from './repositories/TileRepository';
+import { TileDataManager } from './TileDataManager';
+import { ChunkManager } from './ChunkManager';
 
 /**
  * PostgresManager - Connection Pool & Repository Coordinator
@@ -33,6 +35,9 @@ export class PostgresManager {
   public readonly buildings: BuildingRepository;
   public readonly units: UnitRepository;
   public readonly tiles: TileRepository;
+  
+  // TileDataManager für MongoDB↔PostgreSQL Migration
+  private tileDataManager: TileDataManager;
 
   constructor() {
     const host = process.env.POSTGRES_HOST || 'localhost';
@@ -61,6 +66,10 @@ export class PostgresManager {
     this.buildings = new BuildingRepository(this.pool);
     this.units = new UnitRepository(this.pool);
     this.tiles = new TileRepository(this.pool);
+    
+    // Initialize TileDataManager (MongoDB↔PostgreSQL)
+    const chunkManager = new ChunkManager();
+    this.tileDataManager = new TileDataManager(this.pool, chunkManager);
   }
 
   async connect(): Promise<void> {
@@ -128,6 +137,28 @@ export class PostgresManager {
     return this.players.getPlayerStats(username);
   }
 
+  async savePlayerResources(resources: {
+    username: string;
+    wood: number;
+    stone: number;
+    iron: number;
+    gold: number;
+    food: number;
+    fish: number;
+    storageWood: number;
+    storageStone: number;
+    storageIron: number;
+    storageGold: number;
+    storageFood: number;
+    storageFish: number;
+  }): Promise<void> {
+    return this.players.savePlayerResources(resources);
+  }
+
+  async getPlayerResources(username: string): Promise<any> {
+    return this.players.getPlayerResources(username);
+  }
+
   // ===========================
   // BUILDINGS (Delegate to BuildingRepository)
   // ===========================
@@ -176,7 +207,26 @@ export class PostgresManager {
   // TILE OWNERSHIP (Delegate to TileRepository)
   // ===========================
 
+  /**
+   * 🎯 OFFIZIELL: Tile für Spieler claimen
+   * Verwendet TileDataManager für automatische MongoDB→PostgreSQL Migration!
+   */
+  async claimTile(
+    q: number, 
+    r: number, 
+    owner: string
+  ): Promise<void> {
+    // Verwende TileDataManager statt direktem TileRepository
+    // -> Automatische MongoDB-Migration bei Erst-Claim
+    return this.tileDataManager.claimTile(q, r, owner);
+  }
+
+  /**
+   * ⚠️ DEPRECATED: Verwende stattdessen claimTile()
+   * Diese Methode existiert nur für Legacy-Code
+   */
   async setTileOwner(q: number, r: number, owner: string): Promise<void> {
+    console.warn('⚠️ setTileOwner() is deprecated, use claimTile() instead');
     return this.tiles.setTileOwner(q, r, owner);
   }
 
@@ -227,6 +277,18 @@ export class PostgresManager {
 
   async clearPlayerExploration(playerUsername: string): Promise<void> {
     return this.tiles.clearPlayerExploration(playerUsername);
+  }
+
+  // ===========================
+  // TILE RESOURCES & POPULATION (Delegate to TileRepository)
+  // ===========================
+
+  async getTilePopulation(q: number, r: number): Promise<number> {
+    return this.tiles.getTilePopulation(q, r);
+  }
+
+  async setTilePopulation(q: number, r: number, population: number): Promise<void> {
+    return this.tiles.setTilePopulation(q, r, population);
   }
 
   // ===========================
