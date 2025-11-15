@@ -181,6 +181,21 @@ export class PostgresManager {
         )
       `);
 
+      // Unit Movements Table (for persisting active movements)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS unit_movements (
+          unit_id VARCHAR(255) PRIMARY KEY,
+          path_json TEXT NOT NULL,
+          current_tile_index INTEGER NOT NULL,
+          start_time BIGINT NOT NULL,
+          tile_start_time BIGINT NOT NULL,
+          tile_duration BIGINT NOT NULL,
+          created_at TIMESTAMP DEFAULT NOW(),
+          CONSTRAINT fk_movement_unit FOREIGN KEY (unit_id)
+            REFERENCES units(id) ON DELETE CASCADE
+        )
+      `);
+
       // Indexes for performance
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_buildings_owner ON buildings(owner)
@@ -549,6 +564,78 @@ export class PostgresManager {
        WHERE owner = $1`,
       [owner]
     );
+  }
+
+  /**
+   * Speichere aktive Unit-Bewegung
+   */
+  async saveUnitMovement(movement: {
+    unitId: string;
+    path: Array<{ q: number; r: number }>;
+    currentTileIndex: number;
+    startTime: number;
+    tileStartTime: number;
+    tileDuration: number;
+  }): Promise<void> {
+    console.log(`💾 Saving movement to DB: unit=${movement.unitId}, tile=${movement.currentTileIndex}/${movement.path.length}`);
+    await this.pool.query(
+      `INSERT INTO unit_movements (unit_id, path_json, current_tile_index, start_time, tile_start_time, tile_duration)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (unit_id) DO UPDATE SET
+         path_json = $2,
+         current_tile_index = $3,
+         start_time = $4,
+         tile_start_time = $5,
+         tile_duration = $6`,
+      [
+        movement.unitId,
+        JSON.stringify(movement.path),
+        movement.currentTileIndex,
+        movement.startTime,
+        movement.tileStartTime,
+        movement.tileDuration
+      ]
+    );
+    console.log(`✅ Movement saved to DB successfully`);
+  }
+
+  /**
+   * Lade alle aktiven Unit-Bewegungen
+   */
+  async getActiveMovements(): Promise<Array<{
+    unitId: string;
+    path: Array<{ q: number; r: number }>;
+    currentTileIndex: number;
+    startTime: number;
+    tileStartTime: number;
+    tileDuration: number;
+  }>> {
+    console.log(`🔍 Querying active movements from database...`);
+    const result = await this.pool.query(
+      'SELECT * FROM unit_movements'
+    );
+    console.log(`📊 Found ${result.rows.length} movements in database`);
+    
+    return result.rows.map(row => ({
+      unitId: row.unit_id,
+      path: JSON.parse(row.path_json),
+      currentTileIndex: row.current_tile_index,
+      startTime: parseInt(row.start_time),
+      tileStartTime: parseInt(row.tile_start_time),
+      tileDuration: parseInt(row.tile_duration)
+    }));
+  }
+
+  /**
+   * Lösche Unit-Bewegung (wenn abgeschlossen oder abgebrochen)
+   */
+  async deleteUnitMovement(unitId: string): Promise<void> {
+    console.log(`🗑️ Deleting movement from DB for unit: ${unitId}`);
+    await this.pool.query(
+      'DELETE FROM unit_movements WHERE unit_id = $1',
+      [unitId]
+    );
+    console.log(`✅ Movement deleted from DB`);
   }
 
   /**

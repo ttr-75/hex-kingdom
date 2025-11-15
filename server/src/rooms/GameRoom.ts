@@ -86,6 +86,9 @@ export class GameRoom extends Room<GameRoomState> {
     // Load initial world data from MongoDB
     await this.initializeWorld();
     
+    // Restore active unit movements from database
+    await this.restoreActiveMovements();
+    
     // Game Loop
     this.setSimulationInterval(() => this.update(), 1000 / this.state.tickRate);
     
@@ -308,6 +311,9 @@ export class GameRoom extends Room<GameRoomState> {
 
         console.log(`✅ Total units in state after loading: ${this.state.units.size}`);
       }
+      
+      // Restore active movements for this player's units
+      await this.restorePlayerMovements(persistentId);
     } catch (error) {
       console.error('Fehler beim Laden des Spieler-Territoriums:', error);
     }
@@ -1120,14 +1126,20 @@ export class GameRoom extends Room<GameRoomState> {
 
     // Store movement state (start at index 1 to skip current position)
     const now = Date.now();
-    this.movingUnits.set(command.unitId, {
+    const movement = {
       unitId: command.unitId,
       path,
       currentTileIndex: 1, // Start at 1, not 0
       startTime: now,
       tileStartTime: now,
       tileDuration: firstTileDuration
-    });
+    };
+    this.movingUnits.set(command.unitId, movement);
+
+    // Persist to database
+    this.postgres.saveUnitMovement(movement)
+      .then(() => console.log(`💾 Movement saved to DB for unit ${command.unitId}`))
+      .catch(err => console.error(`❌ Failed to save movement to DB:`, err));
 
     // Mark unit as moving
     unit.isMoving = true;
@@ -1149,6 +1161,10 @@ export class GameRoom extends Room<GameRoomState> {
     if (this.movingUnits.has(command.unitId)) {
       this.movingUnits.delete(command.unitId);
       unit.isMoving = false;
+      
+      // Remove from database
+      this.postgres.deleteUnitMovement(command.unitId).catch(console.error);
+      
       console.log(`⏹️ Movement cancelled for unit ${unit.type}`);
     }
   }
@@ -1204,8 +1220,9 @@ export class GameRoom extends Room<GameRoomState> {
           unit.isMoving = false;
           console.log(`✅ Unit ${unit.type} completed movement to (${nextTile.q},${nextTile.r})`);
           
-          // Update DB
+          // Update DB and remove movement
           this.postgres.moveUnit(unitId, unit.q, unit.r, 0).catch(console.error);
+          this.postgres.deleteUnitMovement(unitId).catch(console.error);
         } else {
           // Advance to next tile
           movement.currentTileIndex++;
@@ -1219,6 +1236,11 @@ export class GameRoom extends Room<GameRoomState> {
             
             movement.tileStartTime = now;
             movement.tileDuration = this.calculateTileMovementTime(unitDef, biomeDef);
+            
+            // Update database
+            this.postgres.saveUnitMovement(movement)
+              .then(() => console.log(`💾 Movement updated in DB for tile ${movement.currentTileIndex}`))
+              .catch(err => console.error(`❌ Failed to update movement in DB:`, err));
           } else {
             // Invalid tile, stop movement
             toRemove.push(unitId);
@@ -1459,6 +1481,116 @@ export class GameRoom extends Room<GameRoomState> {
     
     // Lade initiale Chunks um Spawn-Punkt (0,0) aus DB
     await this.loadInitialChunksAsync();
+  }
+  
+  // Restore active unit movements from database after server restart
+  private async restoreActiveMovements() {
+    try {
+      const movements = await this.postgres.getActiveMovements();
+      console.log(`🔄 Found ${movements.length} active unit movements in database (will restore when units load)`);
+      
+      // Note: We don't restore movements here because units are loaded per-player in onJoin
+      // Movements will be restored in restorePlayerMovements() after units are loaded
+    } catch (error) {
+      console.error('❌ Failed to check active movements:', error);
+    }
+  }
+  
+  // Restore active movements for a specific player's units
+  private async restorePlayerMovements(playerUsername: string) {
+    try {
+      const movements = await this.postgres.getActiveMovements();
+      const playerMovements = movements.filter(m => {
+        const unit = this.state.units.get(m.unitId);
+        return unit && unit.owner === playerUsername;
+      });
+      
+      console.log(`🔄 Restoring ${playerMovements.length} active movements for ${playerUsername}`);
+      
+      const now = Date.now();
+      
+      for (const movement of playerMovements) {
+        const unit = this.state.units.get(movement.unitId);
+        if (!unit) {
+          await this.postgres.deleteUnitMovement(movement.unitId);
+          continue;
+        }
+        
+        // Calculate how much time has passed since the movement was saved
+        const elapsedSinceLastTile = now - movement.tileStartTime;
+        
+        console.log(`  ⏱️ Unit ${movement.unitId}: ${elapsedSinceLastTile}ms elapsed, tile duration: ${movement.tileDuration}ms`);
+        
+        // Fast-forward movement through completed tiles
+        let currentIndex = movement.currentTileIndex;
+        let remainingTime = elapsedSinceLastTile;
+        let currentTileDuration = movement.tileDuration;
+        
+        while (remainingTime >= currentTileDuration && currentIndex < movement.path.length - 1) {
+          // Move to next tile
+          remainingTime -= currentTileDuration;
+          currentIndex++;
+          
+          const nextTile = movement.path[currentIndex];
+          unit.q = nextTile.q;
+          unit.r = nextTile.r;
+          
+          console.log(`  🚀 Fast-forwarded unit to tile ${currentIndex}: (${nextTile.q},${nextTile.r})`);
+          
+          // Trigger exploration for this tile
+          const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
+          if (unitDef) {
+            await this.handleUnitExploration(unit.owner, unit, unitDef);
+          }
+          
+          // Check if this was the last tile
+          if (currentIndex >= movement.path.length - 1) {
+            console.log(`  ✅ Unit ${unit.type} completed movement during offline time`);
+            unit.isMoving = false;
+            await this.postgres.moveUnit(movement.unitId, unit.q, unit.r, 0);
+            await this.postgres.deleteUnitMovement(movement.unitId);
+            
+            // Update visibility for the player
+            await this.updatePlayerVisibility(unit.owner);
+            return; // Movement complete, don't restore to movingUnits
+          }
+          
+          // Calculate duration for next tile
+          const nextTargetTile = movement.path[currentIndex];
+          const tileKey = hexToKey(nextTargetTile);
+          const tileState = this.state.tiles.get(tileKey);
+          
+          if (tileState) {
+            const biomeDef = BIOME_DEFINITIONS[tileState.biome as keyof typeof BIOME_DEFINITIONS];
+            const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
+            currentTileDuration = this.calculateTileMovementTime(unitDef, biomeDef);
+          } else {
+            console.error(`  ❌ Invalid tile at index ${currentIndex}, stopping movement`);
+            await this.postgres.deleteUnitMovement(movement.unitId);
+            return;
+          }
+        }
+        
+        // Update movement with new position and adjusted time
+        movement.currentTileIndex = currentIndex;
+        movement.tileStartTime = now - remainingTime;
+        movement.tileDuration = currentTileDuration;
+        
+        // Restore movement to memory
+        this.movingUnits.set(movement.unitId, movement);
+        unit.isMoving = true;
+        
+        // Update database with new position
+        await this.postgres.saveUnitMovement(movement);
+        
+        console.log(`  ✅ Restored movement for unit ${movement.unitId}: tile ${movement.currentTileIndex}/${movement.path.length}, ${remainingTime}ms into current tile`);
+        
+        // Update visibility for the player
+        await this.updatePlayerVisibility(unit.owner);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to restore movements for ${playerUsername}:`, error);
+    }
   }
   
   // Lade initiale Chunks (3x3 um Spawn) aus DB
