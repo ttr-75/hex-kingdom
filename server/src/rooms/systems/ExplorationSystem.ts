@@ -12,7 +12,8 @@ export class ExplorationSystem {
     private state: GameRoomState,
     private postgres: PostgresManager,
     private visibilitySystem: VisibilitySystem,
-    private clients: Client[]
+    private getClients: () => Client[],
+    private getClientByUsername: (username: string) => Client | undefined
   ) {}
 
   async handleUnitExploration(
@@ -50,12 +51,8 @@ export class ExplorationSystem {
     if (newlyVisible.length > 0) {
       await this.postgres.addExploredTiles(playerUsername, newlyVisible);
 
-      const client = this.clients.find(c => {
-        const p = this.state.players.get(c.sessionId);
-        return p && p.username === playerUsername;
-      });
-
-      if (client) {
+      const targetClient = this.getClientByUsername(playerUsername);
+      if (targetClient) {
         const exploreTiles = newlyVisible.map(coord => {
           const tile = this.state.tiles.get(hexToKey(coord));
           if (!tile) return null;
@@ -73,7 +70,7 @@ export class ExplorationSystem {
           };
         }).filter(t => t !== null);
 
-        client.send('newlyExplored', { tiles: exploreTiles });
+        targetClient.send('newlyExplored', { tiles: exploreTiles });
       }
 
       console.log(`🔭 ${playerUsername} hat ${newlyVisible.length} neue Tiles erkundet`);

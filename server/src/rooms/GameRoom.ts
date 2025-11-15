@@ -63,6 +63,9 @@ export class GameRoom extends Room<GameRoomState> {
   private postgres!: PostgresManager; // Für Players, Buildings, TileOwnership (PostgreSQL)
   private redis!: RedisSessionManager; // Für Live-Session-Daten (Redis - führend!)
   
+  // Player Management: Map sessionId -> username for client lookups
+  private clientToUsername = new Map<string, string>();
+  
   // Systems
   private movementSystem!: MovementSystem;
   private visibilitySystem!: VisibilitySystem;
@@ -72,6 +75,22 @@ export class GameRoom extends Room<GameRoomState> {
   // Handlers
   private unitHandler!: UnitHandler;
   private buildingHandler!: BuildingHandler;
+
+  // Helper method: Get player by client sessionId
+  private getPlayerByClient(client: Client): PlayerState | undefined {
+    const username = this.clientToUsername.get(client.sessionId);
+    return username ? this.state.players.get(username) : undefined;
+  }
+
+  // Helper method: Get client by username (for systems)
+  private getClientByUsername(username: string): Client | undefined {
+    for (const [sessionId, uname] of this.clientToUsername.entries()) {
+      if (uname === username) {
+        return this.clients.find(c => c.sessionId === sessionId);
+      }
+    }
+    return undefined;
+  }
 
   async onCreate(_options: any) {
     this.setState(new GameRoomState());
@@ -87,8 +106,19 @@ export class GameRoom extends Room<GameRoomState> {
     await this.redis.connect();
     
     // Initialize Systems
-    this.visibilitySystem = new VisibilitySystem(this.state, this.postgres, this.clients);
-    this.explorationSystem = new ExplorationSystem(this.state, this.postgres, this.visibilitySystem, this.clients);
+    this.visibilitySystem = new VisibilitySystem(
+      this.state,
+      this.postgres,
+      () => Array.from(this.clients),
+      (username: string) => this.getClientByUsername(username)
+    );
+    this.explorationSystem = new ExplorationSystem(
+      this.state,
+      this.postgres,
+      this.visibilitySystem,
+      () => Array.from(this.clients),
+      (username: string) => this.getClientByUsername(username)
+    );
     this.movementSystem = new MovementSystem(
       this.state,
       this.postgres,
@@ -98,8 +128,18 @@ export class GameRoom extends Room<GameRoomState> {
     this.productionSystem = new ProductionSystem(this.state);
     
     // Initialize Handlers
-    this.unitHandler = new UnitHandler(this.state, this.postgres, this.movementSystem, this.explorationSystem);
-    this.buildingHandler = new BuildingHandler(this.state, this.postgres);
+    this.unitHandler = new UnitHandler(
+      this.state,
+      this.postgres,
+      this.movementSystem,
+      this.explorationSystem,
+      (client: Client) => this.getPlayerByClient(client)
+    );
+    this.buildingHandler = new BuildingHandler(
+      this.state,
+      this.postgres,
+      (client: Client) => this.getPlayerByClient(client)
+    );
     
     // Load initial world data from MongoDB
     await this.initializeWorld();
@@ -267,7 +307,10 @@ export class GameRoom extends Room<GameRoomState> {
       }
     }
     
-    this.state.players.set(client.sessionId, player);
+    // Speichere Player mit username als Key (persistent)
+    this.state.players.set(player.username, player);
+    // Registriere sessionId -> username Mapping für Client-Lookups
+    this.clientToUsername.set(client.sessionId, player.username);
     
     console.log(`👤 ${player.username} beigetreten (${client.sessionId}) [${isAdmin ? 'Admin' : 'User'}]`);
     
@@ -609,7 +652,9 @@ export class GameRoom extends Room<GameRoomState> {
   }
 
   onLeave(client: Client, _consented: boolean) {
-    const player = this.state.players.get(client.sessionId);
+    const username = this.clientToUsername.get(client.sessionId);
+    const player = username ? this.state.players.get(username) : undefined;
+    
     if (player) {
       console.log(`👋 ${player.username} hat verlassen`);
       
@@ -668,8 +713,9 @@ export class GameRoom extends Room<GameRoomState> {
       
       console.log(`💾 Spieler-Daten für ${player.username} gespeichert`);
       
-      // Entferne Spieler aus State
-      this.state.players.delete(client.sessionId);
+      // Entferne Spieler aus State (verwende username als Key)
+      this.state.players.delete(player.username);
+      this.clientToUsername.delete(client.sessionId);
     }
   }
 
@@ -765,7 +811,7 @@ export class GameRoom extends Room<GameRoomState> {
   // Note: handleBuild wurde zu BuildingHandler.handleBuild() verschoben
 
   private handleResearch(client: Client, command: ResearchCommand) {
-    const player = this.state.players.get(client.sessionId);
+    const player = this.getPlayerByClient(client);
     if (!player) return;
     
     if (player.currentResearch) {
@@ -807,7 +853,7 @@ export class GameRoom extends Room<GameRoomState> {
   }
 
   private handleCreateTradeOffer(client: Client, command: CreateTradeOfferCommand) {
-    const player = this.state.players.get(client.sessionId);
+    const player = this.getPlayerByClient(client);
     if (!player) return;
     
     // Prüfe ob Spieler die Ressource hat
@@ -822,8 +868,8 @@ export class GameRoom extends Room<GameRoomState> {
     
     // Angebot erstellen
     const offer = new TradeOfferState();
-    offer.id = `${client.sessionId}_${Date.now()}`;
-    offer.seller = client.sessionId;
+    offer.id = `${player.username}_${Date.now()}`;
+    offer.seller = player.username;
     offer.resource = command.resource;
     offer.amount = command.amount;
     offer.pricePerUnit = command.pricePerUnit;
@@ -835,7 +881,7 @@ export class GameRoom extends Room<GameRoomState> {
   }
 
   private handleAcceptTradeOffer(client: Client, command: AcceptTradeOfferCommand) {
-    const buyer = this.state.players.get(client.sessionId);
+    const buyer = this.getPlayerByClient(client);
     if (!buyer) return;
     
     const offer = this.state.tradeOffers.get(command.offerId);
@@ -874,7 +920,7 @@ export class GameRoom extends Room<GameRoomState> {
     }
     
     this.broadcast('tradeCompleted', {
-      buyer: client.sessionId,
+      buyer: buyer.username,
       seller: offer.seller,
       resource: offer.resource,
       amount: command.amount,
@@ -1147,7 +1193,7 @@ export class GameRoom extends Room<GameRoomState> {
     const CHUNK_SIZE = 16;
     const MAX_CHUNKS_PER_REQUEST = 100;
     
-    const player = this.state.players.get(client.sessionId);
+    const player = this.getPlayerByClient(client);
     if (!player) return;
     
     const isAdmin = (player as any).isAdmin || false;
@@ -1197,7 +1243,7 @@ export class GameRoom extends Room<GameRoomState> {
       console.log(`📦 ${loadedCount} Chunks geladen (${this.state.tiles.size} Tiles total)`);
       
       // Sende aktualisierte sichtbare Tiles an Client
-      const player = this.state.players.get(client.sessionId);
+      const player = this.getPlayerByClient(client);
       if (player) {
         await this.sendVisibleAndExploredTilesToClient(client.sessionId, player.username, isAdmin);
       }

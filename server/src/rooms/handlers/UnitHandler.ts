@@ -1,5 +1,5 @@
 import { Client } from '@colyseus/core';
-import { GameRoomState, UnitState } from '../GameRoomState.js';
+import { GameRoomState, UnitState, PlayerState } from '../GameRoomState.js';
 import { PostgresManager } from '../../database/PostgresManager.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
 import { ExplorationSystem } from '../systems/ExplorationSystem.js';
@@ -17,11 +17,12 @@ export class UnitHandler {
     private state: GameRoomState,
     private postgres: PostgresManager,
     private movementSystem: MovementSystem,
-    private explorationSystem: ExplorationSystem
+    private explorationSystem: ExplorationSystem,
+    private getPlayerByClient: (client: Client) => PlayerState | undefined
   ) {}
 
   async handleRecruitUnit(client: Client, command: any): Promise<void> {
-    const player = this.state.players.get(client.sessionId);
+    const player = this.getPlayerByClient(client);
     if (!player) return;
 
     const { buildingId, unitType } = command;
@@ -91,7 +92,7 @@ export class UnitHandler {
   async handleMoveUnit(client: Client, command: MoveUnitCommand): Promise<void> {
     console.log(`🎯 handleMoveUnit called: unitId=${command.unitId}, destination=(${command.destination.q},${command.destination.r})`);
     
-    const player = this.state.players.get(client.sessionId);
+    const player = this.getPlayerByClient(client);
     if (!player) return;
 
     const unit = this.state.units.get(command.unitId);
@@ -170,7 +171,7 @@ export class UnitHandler {
   }
 
   handleCancelMovement(client: Client, command: { unitId: string }): void {
-    const player = this.state.players.get(client.sessionId);
+    const player = this.getPlayerByClient(client);
     if (!player) return;
 
     const unit = this.state.units.get(command.unitId);

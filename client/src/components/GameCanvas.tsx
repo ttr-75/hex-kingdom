@@ -21,7 +21,10 @@ export default function GameCanvas() {
   const [selectedHex, setSelectedHex] = useState<HexCoord | null>(null);
   const [missingChunks, setMissingChunks] = useState<Array<{ chunkX: number; chunkY: number }>>([]);
   
-  const currentPlayer = sessionId ? players.get(sessionId) ?? null : null;
+  // Players Map verwendet jetzt username als Key, aber player.id enthält die sessionId
+  const currentPlayer = sessionId 
+    ? Array.from(players.values()).find(p => p.id === sessionId) ?? null 
+    : null;
   
   // Debug logging for currentPlayer
   useEffect(() => {

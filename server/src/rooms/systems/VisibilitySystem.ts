@@ -13,7 +13,8 @@ export class VisibilitySystem {
   constructor(
     private state: GameRoomState,
     private postgres: PostgresManager,
-    private clients: Client[]
+    private getClients: () => Client[],
+    private getClientByUsername: (username: string) => Client | undefined
   ) {}
 
   getBiomeViewDistance(biomeType: string): number {
@@ -56,12 +57,8 @@ export class VisibilitySystem {
   }
 
   async updatePlayerVisibility(playerUsername: string): Promise<void> {
-    const client = this.clients.find(c => {
-      const p = this.state.players.get(c.sessionId);
-      return p && p.username === playerUsername;
-    });
-
-    if (!client) return;
+    const targetClient = this.getClientByUsername(playerUsername);
+    if (!targetClient) return;
 
     const visibleKeys = new Set<string>();
     
@@ -163,7 +160,7 @@ export class VisibilitySystem {
       }
     });
     
-    client.send('visibilityUpdate', { 
+    targetClient.send('visibilityUpdate', { 
       visibleTiles,
       exploredTiles: exploredOnlyTiles
     });

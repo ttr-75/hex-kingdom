@@ -1,9 +1,10 @@
 import { Client } from '@colyseus/core';
-import { GameRoomState, BuildingState } from '../GameRoomState.js';
+import { GameRoomState, BuildingState, PlayerState } from '../GameRoomState.js';
 import { PostgresManager } from '../../database/PostgresManager.js';
 import {
   BUILDING_DEFINITIONS,
-  BuildCommand
+  BuildCommand,
+  hexToKey
 } from '@hex-kingdom/shared';
 
 const TIME_MULTIPLIER = parseFloat(process.env.TIME_MULTIPLIER || '1') || 1;
@@ -11,11 +12,12 @@ const TIME_MULTIPLIER = parseFloat(process.env.TIME_MULTIPLIER || '1') || 1;
 export class BuildingHandler {
   constructor(
     private state: GameRoomState,
-    private postgres: PostgresManager
+    private postgres: PostgresManager,
+    private getPlayerByClient: (client: Client) => PlayerState | undefined
   ) {}
 
   async handleBuild(client: Client, command: BuildCommand): Promise<void> {
-    const player = this.state.players.get(client.sessionId);
+    const player = this.getPlayerByClient(client);
     if (!player) return;
     
     try {
@@ -45,14 +47,35 @@ export class BuildingHandler {
     }
     
     // 🔒 WICHTIG: Prüfe Tile Ownership - man darf nur auf eigenen Tiles bauen!
-    const tileOwner = await this.postgres.getTileOwner(command.position.q, command.position.r);
-    if (!tileOwner) {
+    // Prüfe zuerst im RAM (führend für aktive Session)
+    const tileKey = hexToKey({ q: command.position.q, r: command.position.r });
+    const tile = this.state.tiles.get(tileKey);
+    
+    if (!tile) {
+      client.send('error', { message: 'Dieses Tile existiert nicht!' });
+      return;
+    }
+    
+    if (!tile.owner) {
       client.send('error', { message: 'Dieses Tile gehört niemandem. Claime es zuerst!' });
       return;
     }
-    if (tileOwner !== player.username) {
+    
+    if (tile.owner !== player.username) {
       client.send('error', { message: 'Du kannst nur auf deinen eigenen Tiles bauen!' });
       return;
+    }
+    
+    // Stelle sicher, dass die DB synchronisiert ist (für Persistenz)
+    const dbOwner = await this.postgres.getTileOwner(command.position.q, command.position.r);
+    if (!dbOwner || dbOwner !== player.username) {
+      console.log(`⚠️ DB out of sync for tile (${command.position.q},${command.position.r}), syncing now...`);
+      try {
+        await this.postgres.claimTile(command.position.q, command.position.r, player.username);
+      } catch (error) {
+        // Tile könnte bereits geclaimt sein - das ist OK wenn der RAM-State stimmt
+        console.log(`ℹ️ Could not claim tile in DB (already claimed or error):`, error);
+      }
     }
     
     // Prüfe Anzahl der Gebäude auf diesem Tile
