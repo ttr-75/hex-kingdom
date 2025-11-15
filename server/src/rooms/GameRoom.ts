@@ -875,14 +875,15 @@ export class GameRoom extends Room<GameRoomState> {
   private async assignStartingTerritory(playerId: string, isAdmin: boolean = false): Promise<{ q: number; r: number }> {
     const config = isAdmin ? PLAYER_CONFIG.admin : PLAYER_CONFIG.user;
     
-    // Einfache Implementierung: Gebe jedem Spieler ein paar Felder in der Nähe des Spawns
-    const playerIndex = this.state.players.size - 1;
-    const angle = (playerIndex * 2 * Math.PI) / 8; // Verteile bis zu 8 Spieler im Kreis
-    const spawnDistance = 10;
+    // Finde eine geeignete Startposition
+    const spawnPosition = await this.findSuitableSpawnPosition();
     
-    const spawnQ = Math.round(spawnDistance * Math.cos(angle));
-    const spawnR = Math.round(spawnDistance * Math.sin(angle));
+    if (!spawnPosition) {
+      console.warn(`⚠️ Keine geeignete Startposition gefunden für ${playerId}, verwende (0,0)`);
+      return { q: 0, r: 0 };
+    }
     
+    const { q: spawnQ, r: spawnR } = spawnPosition;
     const tilesToOwn: Array<{ q: number; r: number }> = [];
     
     // Markiere Hexfelder basierend auf Radius
@@ -908,7 +909,7 @@ export class GameRoom extends Room<GameRoomState> {
     }
     
     console.log(`🏠 ${isAdmin ? 'Admin' : 'User'} erhält ${tilesToOwn.length} Tiles (Radius: ${config.startingTilesRadius})`);
-    console.log(`🎯 Spawn-Koordinaten: q=${spawnQ}, r=${spawnR}`);
+    console.log(`🎯 Spawn-Koordinaten: q=${spawnQ}, r=${spawnR} (Biom: ${this.state.tiles.get(hexToKey(spawnPosition))?.biome})`);
     
     // Async: Speichere in DB (fire & forget)
     if (tilesToOwn.length > 0) {
@@ -924,6 +925,127 @@ export class GameRoom extends Room<GameRoomState> {
     
     // Gebe Spawn-Position zurück
     return { q: spawnQ, r: spawnR };
+  }
+  
+  /**
+   * Findet eine geeignete Startposition für einen neuen Spieler.
+   * Kriterien:
+   * - Nicht im Wasser (Ocean, Lake, River)
+   * - Nicht in Wüste
+   * - Nicht in Hügeln oder Gebirge
+   * - Bevorzugt: Grasland oder Laubwald
+   * - Nicht bereits von einem anderen Spieler beansprucht
+   * - Mindestabstand zu anderen Spielern
+   */
+  private async findSuitableSpawnPosition(): Promise<{ q: number; r: number } | null> {
+    const SUITABLE_BIOMES = new Set([
+      'grassland',           // Beste Wahl
+      'deciduous_forest',    // Gute Wahl
+      'coniferous_forest',   // Akzeptabel
+      'steppe'              // Akzeptabel
+    ]);
+    
+    const UNSUITABLE_BIOMES = new Set([
+      'ocean', 'lake', 'river',  // Wasser
+      'desert',                  // Wüste
+      'hills', 'mountains',      // Zu bergig
+      'swamp'                    // Zu sumpfig
+    ]);
+    
+    const MIN_DISTANCE_BETWEEN_PLAYERS = 20; // Mindestabstand in Hex-Feldern
+    const MAX_ATTEMPTS = 100; // Maximale Suchversuche
+    
+    // Sammle bereits belegte Positionen
+    const occupiedPositions: Array<{ q: number; r: number }> = [];
+    this.state.tiles.forEach((tile) => {
+      if (tile.owner) {
+        occupiedPositions.push({ q: tile.q, r: tile.r });
+      }
+    });
+    
+    // Berechne Zentrum jedes Spieler-Territoriums
+    const playerCenters: Array<{ q: number; r: number }> = [];
+    if (occupiedPositions.length > 0) {
+      // Gruppiere Tiles nach Spieler
+      const playerTiles = new Map<string, Array<{ q: number; r: number }>>();
+      this.state.tiles.forEach((tile) => {
+        if (tile.owner) {
+          if (!playerTiles.has(tile.owner)) {
+            playerTiles.set(tile.owner, []);
+          }
+          playerTiles.get(tile.owner)!.push({ q: tile.q, r: tile.r });
+        }
+      });
+      
+      // Berechne Zentrum für jeden Spieler
+      playerTiles.forEach((tiles) => {
+        const avgQ = tiles.reduce((sum, t) => sum + t.q, 0) / tiles.length;
+        const avgR = tiles.reduce((sum, t) => sum + t.r, 0) / tiles.length;
+        playerCenters.push({ q: Math.round(avgQ), r: Math.round(avgR) });
+      });
+    }
+    
+    // Suche nach geeigneten Kandidaten
+    const candidates: Array<{ q: number; r: number; score: number }> = [];
+    
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      // Zufällige Position in einem größeren Radius um (0,0)
+      const angle = Math.random() * 2 * Math.PI;
+      const distance = 10 + Math.random() * 30; // 10-40 Tiles vom Zentrum
+      
+      const q = Math.round(distance * Math.cos(angle));
+      const r = Math.round(distance * Math.sin(angle));
+      
+      const tileKey = hexToKey({ q, r });
+      const tile = this.state.tiles.get(tileKey);
+      
+      if (!tile) continue; // Tile existiert nicht
+      if (tile.owner) continue; // Bereits beansprucht
+      
+      // Prüfe Biom
+      if (UNSUITABLE_BIOMES.has(tile.biome)) continue;
+      
+      // Prüfe Abstand zu anderen Spielern
+      let tooClose = false;
+      for (const center of playerCenters) {
+        const dq = q - center.q;
+        const dr = r - center.r;
+        const distance = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+        
+        if (distance < MIN_DISTANCE_BETWEEN_PLAYERS) {
+          tooClose = true;
+          break;
+        }
+      }
+      
+      if (tooClose) continue;
+      
+      // Berechne Score basierend auf Biom-Eignung
+      let score = 0;
+      if (tile.biome === 'grassland') score = 100;
+      else if (tile.biome === 'deciduous_forest') score = 90;
+      else if (tile.biome === 'steppe') score = 70;
+      else if (tile.biome === 'coniferous_forest') score = 60;
+      else if (SUITABLE_BIOMES.has(tile.biome)) score = 50;
+      
+      // Bonus für hohe Fruchtbarkeit
+      score += tile.fertility * 10;
+      
+      candidates.push({ q, r, score });
+    }
+    
+    if (candidates.length === 0) {
+      console.error('❌ Keine geeignete Startposition gefunden!');
+      return null;
+    }
+    
+    // Sortiere nach Score und wähle beste Position
+    candidates.sort((a, b) => b.score - a.score);
+    const best = candidates[0];
+    
+    console.log(`✅ Geeignete Startposition gefunden: (${best.q}, ${best.r}) mit Score ${best.score.toFixed(1)}`);
+    
+    return { q: best.q, r: best.r };
   }
   
   // Chunk-Loading Handler - Lade NUR aus MongoDB + Fog-of-War für User

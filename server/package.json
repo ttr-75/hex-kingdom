@@ -16,6 +16,7 @@
     "reset-db": "tsx src/scripts/resetDatabase.ts",
     "complete-cleanup": "tsx src/scripts/completeCleanup.ts",
     "recreate-postgres": "tsx src/scripts/recreatePostgresSchema.ts",
+    "full-reset": "tsx src/scripts/fullReset.ts",
     "migration:multiple-buildings": "tsx src/scripts/migrateMultipleBuildings.ts"
   },
   "dependencies": {
