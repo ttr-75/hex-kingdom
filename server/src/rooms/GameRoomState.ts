@@ -1,12 +1,13 @@
-import { Schema, MapSchema, type, filter } from '@colyseus/schema';
-import {
-  HexCoord,
-  ResourceType,
-  Resources,
-  BuildingType,
-  UnitType,
-  TechnologyType
-} from '@hex-kingdom/shared';
+import { Schema, MapSchema, ArraySchema, type } from '@colyseus/schema';
+// Import types if needed later
+// import {
+//   HexCoord,
+//   ResourceType,
+//   Resources,
+//   BuildingType,
+//   UnitType,
+//   TechnologyType
+// } from '@hex-kingdom/shared';
 
 // Player State
 export class PlayerState extends Schema {
@@ -19,12 +20,14 @@ export class PlayerState extends Schema {
   @type('number') iron: number = 40;
   @type('number') gold: number = 50;
   @type('number') food: number = 100;
+  @type('number') fish: number = 0;
   
   @type('number') storageWood: number = 500;
   @type('number') storageStone: number = 500;
   @type('number') storageIron: number = 300;
   @type('number') storageGold: number = 200;
   @type('number') storageFood: number = 400;
+  @type('number') storageFish: number = 300;
   
   @type(['string']) researchedTechs = new Array<string>();
   @type('string') currentResearch: string = '';
@@ -52,6 +55,7 @@ export class UnitState extends Schema {
   @type('number') r: number = 0;
   @type('string') owner: string = '';
   @type('number') health: number = 100;
+  @type('boolean') isMoving: boolean = false;
 }
 
 // Trade Offer State
@@ -64,14 +68,20 @@ export class TradeOfferState extends Schema {
   @type('number') expiresAt: number = 0;
 }
 
+// Resource on Tile
+export class TileResource extends Schema {
+  @type('string') type: string = '';
+  @type('number') amount: number = 0;
+}
+
 // Hex Tile State
 export class HexTileState extends Schema {
   @type('number') q: number = 0;
   @type('number') r: number = 0;
-  @type('string') terrain: string = 'grass';
+  @type('string') biome: string = 'grassland';    // Biome-System
+  @type('number') fertility: number = 0.5;        // Fruchtbarkeit 0-1
   @type('string') owner: string = '';
-  @type('string') resourceType: string = '';
-  @type('number') resourceAmount: number = 0;
+  @type([TileResource]) resources = new ArraySchema<TileResource>(); // Mehrere Ressourcen möglich
 }
 
 // Main Game State

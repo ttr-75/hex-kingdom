@@ -8,6 +8,7 @@ export interface PlayerDocument {
   iron: number;
   gold: number;
   food: number;
+  fish: number;
   storageCapacity: number;
   researching: string | null;
   researchProgress: number;
@@ -84,6 +85,7 @@ export class PlayerManager {
       iron: number;
       gold: number;
       food: number;
+      fish: number;
       storageCapacity: number;
     }
   ): Promise<void> {

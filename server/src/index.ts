@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { monitor } from '@colyseus/monitor';
@@ -32,13 +33,13 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() });
 });
 
 // API Endpoints
-app.get('/api/rooms', async (req, res) => {
-  const rooms = await gameServer.matchMaker.query({});
+app.get('/api/rooms', async (_req, res) => {
+  const rooms = await (gameServer as any).matchMaker.query({});
   res.json(rooms);
 });
 

@@ -3,6 +3,7 @@ import {
   GameRoomState,
   PlayerState,
   BuildingState,
+  UnitState,
   TradeOfferState
 } from './GameRoomState.js';
 import {
@@ -10,15 +11,37 @@ import {
   ResearchCommand,
   CreateTradeOfferCommand,
   AcceptTradeOfferCommand,
+  MoveUnitCommand,
+  // RecruitUnitCommand,
   BUILDING_DEFINITIONS,
+  UNIT_DEFINITIONS,
   STARTING_RESOURCES,
   STARTING_STORAGE_CAPACITY,
   TECHNOLOGY_DEFINITIONS,
-  hexToKey
+  BIOME_DEFINITIONS,
+  hexToKey,
+  hexLine,
+  HexCoord,
+  findPath
 } from '@hex-kingdom/shared';
 import { ChunkManager } from '../database/ChunkManager.js';
 import { PostgresManager } from '../database/PostgresManager.js';
 import { RedisSessionManager } from '../database/RedisSessionManager.js';
+
+// ⏱️ TIME MULTIPLIER - Set this higher in dev mode to speed up all timers
+// 1.0 = normal speed, 10.0 = 10x faster, 20.0 = 20x faster
+const TIME_MULTIPLIER = parseFloat(process.env.TIME_MULTIPLIER || '1') || 1;
+console.log(`⏱️ TIME_MULTIPLIER loaded: ${TIME_MULTIPLIER}x speed`);
+
+// Movement tracking interface
+interface MovingUnit {
+  unitId: string;
+  path: HexCoord[];
+  currentTileIndex: number; // Which tile in path we're currently moving to
+  startTime: number; // When movement started (ms)
+  tileStartTime: number; // When current tile movement started (ms)
+  tileDuration: number; // How long current tile takes (ms)
+}
 
 const PLAYER_COLORS = [
   '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
@@ -45,6 +68,7 @@ export class GameRoom extends Room<GameRoomState> {
   private chunkManager!: ChunkManager; // Für Terrain-Daten (MongoDB)
   private postgres!: PostgresManager; // Für Players, Buildings, TileOwnership (PostgreSQL)
   private redis!: RedisSessionManager; // Für Live-Session-Daten (Redis - führend!)
+  private movingUnits: Map<string, MovingUnit> = new Map(); // Track units in motion
 
   async onCreate(_options: any) {
     this.setState(new GameRoomState());
@@ -68,6 +92,18 @@ export class GameRoom extends Room<GameRoomState> {
     // Message Handlers
     this.onMessage('build', (client, message: BuildCommand) => {
       this.handleBuild(client, message);
+    });
+    
+    this.onMessage('recruitUnit', (client, message) => {
+      this.handleRecruitUnit(client, message);
+    });
+    
+    this.onMessage('moveUnit', (client, message: MoveUnitCommand) => {
+      this.handleMoveUnit(client, message);
+    });
+    
+    this.onMessage('cancelMovement', (client, message: { unitId: string }) => {
+      this.handleCancelMovement(client, message);
     });
     
     this.onMessage('research', (client, message: ResearchCommand) => {
@@ -115,11 +151,13 @@ export class GameRoom extends Room<GameRoomState> {
       player.iron = redisSession.iron;
       player.gold = redisSession.gold;
       player.food = redisSession.food;
+      player.fish = redisSession.fish;
       player.storageWood = redisSession.storageWood;
       player.storageStone = redisSession.storageStone;
       player.storageIron = redisSession.storageIron;
       player.storageGold = redisSession.storageGold;
       player.storageFood = redisSession.storageFood;
+      player.storageFish = redisSession.storageFish;
       player.currentResearch = redisSession.currentResearch || '';
       
       // Extend Session TTL
@@ -138,12 +176,14 @@ export class GameRoom extends Room<GameRoomState> {
         player.iron = STARTING_RESOURCES.iron;
         player.gold = STARTING_RESOURCES.gold;
         player.food = STARTING_RESOURCES.food;
+        player.fish = STARTING_RESOURCES.fish;
         
         player.storageWood = STARTING_STORAGE_CAPACITY.wood;
         player.storageStone = STARTING_STORAGE_CAPACITY.stone;
         player.storageIron = STARTING_STORAGE_CAPACITY.iron;
         player.storageGold = STARTING_STORAGE_CAPACITY.gold;
         player.storageFood = STARTING_STORAGE_CAPACITY.food;
+        player.storageFish = STARTING_STORAGE_CAPACITY.fish;
         
         // Update lastLogin
         await this.postgres.updatePlayerLogin(persistentId);
@@ -155,15 +195,23 @@ export class GameRoom extends Room<GameRoomState> {
         player.iron = STARTING_RESOURCES.iron;
         player.gold = STARTING_RESOURCES.gold;
         player.food = STARTING_RESOURCES.food;
+        player.fish = STARTING_RESOURCES.fish;
         
         player.storageWood = STARTING_STORAGE_CAPACITY.wood;
         player.storageStone = STARTING_STORAGE_CAPACITY.stone;
         player.storageIron = STARTING_STORAGE_CAPACITY.iron;
         player.storageGold = STARTING_STORAGE_CAPACITY.gold;
         player.storageFood = STARTING_STORAGE_CAPACITY.food;
+        player.storageFish = STARTING_STORAGE_CAPACITY.fish;
         
         // Erstelle Player in PostgreSQL
-        await this.postgres.createPlayer(persistentId, player.color);
+        try {
+          await this.postgres.createPlayer(persistentId, player.color);
+          console.log(`✅ Player ${persistentId} erfolgreich in PostgreSQL erstellt`);
+        } catch (error) {
+          console.error(`❌ Fehler beim Erstellen von Player ${persistentId} in PostgreSQL:`, error);
+          throw error;
+        }
       }
     }
     
@@ -233,15 +281,42 @@ export class GameRoom extends Room<GameRoomState> {
         
         console.log(`✅ Total buildings in state after loading: ${this.state.buildings.size}`);
       }
+
+      // Lade Units aus PostgreSQL
+      const playerUnits = await this.postgres.getPlayerUnits(persistentId);
+      console.log(`🔍 Checking for units for user '${persistentId}': found ${playerUnits.length} units`);
+
+      if (playerUnits.length > 0) {
+        console.log(`🎖️ Lade ${playerUnits.length} Units für ${player.username}`);
+
+        playerUnits.forEach((dbUnit: any) => {
+          if (this.state.units.has(dbUnit.id)) {
+            console.log(`⚠️ Unit ${dbUnit.id} already in state, skipping`);
+            return;
+          }
+
+          const unit = new UnitState();
+          unit.id = dbUnit.id;
+          unit.type = dbUnit.type;
+          unit.q = dbUnit.q;
+          unit.r = dbUnit.r;
+          unit.owner = dbUnit.owner;
+          unit.health = dbUnit.health;
+
+          this.state.units.set(unit.id, unit);
+        });
+
+        console.log(`✅ Total units in state after loading: ${this.state.units.size}`);
+      }
     } catch (error) {
       console.error('Fehler beim Laden des Spieler-Territoriums:', error);
     }
     
-    // Wenn kein Territorium: Weise neues zu
+    // Wenn kein Territorium: Weise neues zu (außer für Admin)
     let spawnPosition = { q: 0, r: 0 };
-    if (!hasTerritory) {
+    if (!hasTerritory && !isAdmin) {
       spawnPosition = await this.assignStartingTerritory(persistentId, isAdmin); // Verwende username
-    } else {
+    } else if (hasTerritory) {
       // Berechne Zentrum des existierenden Territoriums
       const tiles = await this.postgres.getPlayerTiles(persistentId);
       if (tiles.length > 0) {
@@ -275,11 +350,13 @@ export class GameRoom extends Room<GameRoomState> {
       iron: player.iron,
       gold: player.gold,
       food: player.food,
+      fish: player.fish,
       storageWood: player.storageWood,
       storageStone: player.storageStone,
       storageIron: player.storageIron,
       storageGold: player.storageGold,
       storageFood: player.storageFood,
+      storageFish: player.storageFish,
       currentResearch: player.currentResearch || null,
       researchProgress: 0,
       researchEndTime: player.researchEndTime || 0,
@@ -288,52 +365,101 @@ export class GameRoom extends Room<GameRoomState> {
     });
     console.log(`✅ Redis session created for ${persistentId}`);
     
-    // Sende initiale sichtbare Tiles an Client (Fog-of-War)
-    this.sendVisibleTilesToClient(client.sessionId, persistentId, isAdmin);
+    // Sende initiale sichtbare + explored Tiles an Client (Fog-of-War)
+    await this.sendVisibleAndExploredTilesToClient(client.sessionId, persistentId, isAdmin);
   }
   
-  // Sende nur sichtbare Tiles an einen spezifischen Client
-  private sendVisibleTilesToClient(clientId: string, userId: string, isAdmin: boolean) {
-    const VISION_RADIUS = 2;
+  // Sende sichtbare + explored Tiles an einen spezifischen Client (mit Exploration-Tracking)
+  private async sendVisibleAndExploredTilesToClient(clientId: string, userId: string, isAdmin: boolean) {
     const visibleTiles: Array<any> = [];
+    const exploredTiles: Array<any> = [];
     
     if (isAdmin) {
-      // Admin sieht alles
+      // Admin sieht alles (keine Exploration nötig)
       this.state.tiles.forEach((tile, key) => {
         visibleTiles.push({
           key,
           q: tile.q,
           r: tile.r,
-          terrain: tile.terrain,
+          biome: tile.biome,
+          fertility: tile.fertility,
           owner: tile.owner,
-          resourceType: tile.resourceType,
-          resourceAmount: tile.resourceAmount
+          resources: tile.resources.map(r => ({ type: r.type, amount: r.amount }))
         });
       });
     } else {
-      // User: Sammle owned tiles (nach username suchen)
-      const ownedTiles: Array<{ q: number; r: number }> = [];
+      // User: Berechne Sichtbarkeit basierend auf Biome viewDistance + Units
+      const visibleKeys = new Set<string>();
+      
+      // 1. Sammle alle owned tiles (Kingdom)
+      const ownedTiles: Array<{ q: number; r: number; biome: string }> = [];
       this.state.tiles.forEach(tile => {
-        if (tile.owner === userId) { // Verwende userId (username) statt clientId
-          ownedTiles.push({ q: tile.q, r: tile.r });
+        if (tile.owner === userId) {
+          ownedTiles.push({ q: tile.q, r: tile.r, biome: tile.biome });
+          visibleKeys.add(hexToKey({ q: tile.q, r: tile.r }));
         }
       });
       
-      // Berechne sichtbare Tiles
-      const visibleKeys = new Set<string>();
+      // 2. Sammle alle eigenen Units
+      const playerUnits: Array<{ q: number; r: number; type: string }> = [];
+      this.state.units.forEach(unit => {
+        if (unit.owner === userId) {
+          const unitTile = this.state.tiles.get(hexToKey({ q: unit.q, r: unit.r }));
+          if (unitTile) {
+            playerUnits.push({ q: unit.q, r: unit.r, type: unit.type });
+          }
+        }
+      });
+      
+      // 3. Für jedes owned Tile: Berechne Sichtbarkeit basierend auf viewDistance
       ownedTiles.forEach(owned => {
+        // Hole viewDistance des Tiles aus BIOME_DEFINITIONS
+        const biomeType = owned.biome as any;
+        const biomeViewDistance = this.getBiomeViewDistance(biomeType);
+        
+        // Mindestens direkte Nachbarn (distance = 1) sind immer sichtbar
+        const viewDistance = Math.max(1, biomeViewDistance);
+        
+        // Berechne sichtbare Tiles im Radius
         this.state.tiles.forEach((tile, key) => {
           const dq = tile.q - owned.q;
           const dr = tile.r - owned.r;
           const distance = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
           
-          if (distance <= VISION_RADIUS) {
+          if (distance <= viewDistance) {
             visibleKeys.add(key);
           }
         });
       });
       
-      // Sammle sichtbare Tiles
+      // 4. Für jede Unit: Berechne Sichtbarkeit basierend auf Unit visionBonus + Biome
+      playerUnits.forEach(unit => {
+        const unitTile = this.state.tiles.get(hexToKey({ q: unit.q, r: unit.r }));
+        if (!unitTile) return;
+        
+        const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
+        const unitVisionBonus = unitDef?.visionBonus || 0;
+        
+        // Berechne sichtbare Tiles mit Line-of-Sight Check
+        this.state.tiles.forEach((tile, key) => {
+          if (this.canSeeTile(
+            { q: unit.q, r: unit.r },
+            unitTile.biome,
+            unitVisionBonus,
+            { q: tile.q, r: tile.r }
+          )) {
+            visibleKeys.add(key);
+          }
+        });
+      });
+      
+      // 5. Lade explored tiles aus DB
+      const exploredFromDB = await this.postgres.getExploredTiles(userId);
+      const exploredKeys = new Set<string>(
+        exploredFromDB.map(t => hexToKey({ q: t.q, r: t.r }))
+      );
+      
+      // 6. Sammle sichtbare Tiles
       visibleKeys.forEach(key => {
         const tile = this.state.tiles.get(key);
         if (tile) {
@@ -341,21 +467,59 @@ export class GameRoom extends Room<GameRoomState> {
             key,
             q: tile.q,
             r: tile.r,
-            terrain: tile.terrain,
+            biome: tile.biome,
+            fertility: tile.fertility,
             owner: tile.owner,
-            resourceType: tile.resourceType,
-            resourceAmount: tile.resourceAmount
+            resources: tile.resources.map(r => ({ type: r.type, amount: r.amount }))
           });
         }
       });
+      
+      // 5. Sammle explored (aber nicht sichtbare) Tiles
+      exploredKeys.forEach(key => {
+        if (!visibleKeys.has(key)) {
+          const tile = this.state.tiles.get(key);
+          if (tile) {
+            exploredTiles.push({
+              key,
+              q: tile.q,
+              r: tile.r,
+              biome: tile.biome
+              // Keine live-Daten (owner, resources) für explored tiles
+            });
+          }
+        }
+      });
+      
+      // 6. Speichere neu sichtbare Tiles als explored
+      const tilesToSave = Array.from(visibleKeys).map(key => {
+        const [qStr, rStr] = key.split(',');
+        return { q: parseInt(qStr), r: parseInt(rStr) };
+      });
+      
+      if (tilesToSave.length > 0) {
+        // Async: Speichere in DB (fire & forget)
+        this.postgres.addExploredTiles(userId, tilesToSave).catch(err => {
+          console.error('Failed to save explored tiles:', err);
+        });
+      }
     }
     
-    console.log(`📤 Sending ${visibleTiles.length} visible tiles to client ${clientId}`);
+    console.log(`📤 Sending ${visibleTiles.length} visible + ${exploredTiles.length} explored tiles to client ${clientId}`);
     
     const client = this.clients.find(c => c.sessionId === clientId);
     if (client) {
       client.send('visibleTiles', { tiles: visibleTiles });
+      if (exploredTiles.length > 0) {
+        client.send('exploredTiles', { tiles: exploredTiles });
+      }
     }
+  }
+  
+  // Hilfsfunktion: Hole viewDistance für ein Biom
+  private getBiomeViewDistance(biomeType: string): number {
+    const biomeDef = BIOME_DEFINITIONS[biomeType as keyof typeof BIOME_DEFINITIONS];
+    return biomeDef?.viewDistance ?? 2; // Default: 2 falls Biom unbekannt
   }
 
   onLeave(client: Client, _consented: boolean) {
@@ -417,6 +581,16 @@ export class GameRoom extends Room<GameRoomState> {
           console.error('Failed to save player buildings on leave:', err);
         });
       }
+
+      // Speichere Units in PostgreSQL  
+      const playerUnits = Array.from(this.state.units.values()).filter(
+        u => u.owner === player.username
+      );
+
+      if (playerUnits.length > 0) {
+        console.log(`💾 Speichere ${playerUnits.length} Units für ${player.username}`);
+        // Units sind bereits in DB, keine weitere Action nötig (werden bei Movement updated)
+      }
       
       console.log(`💾 Spieler-Daten für ${player.username} gespeichert`);
       
@@ -448,6 +622,9 @@ export class GameRoom extends Room<GameRoomState> {
     
     // Update Gebäude-Konstruktion
     this.updateConstruction(deltaSeconds);
+    
+    // Update unit movements
+    this.updateUnitMovements(now);
     
     // Entferne abgelaufene Handelsangebote
     this.cleanupExpiredTradeOffers();
@@ -567,6 +744,20 @@ export class GameRoom extends Room<GameRoomState> {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
     
+    // Ensure player exists in PostgreSQL before building
+    try {
+      const dbPlayer = await this.postgres.getPlayer(player.username);
+      if (!dbPlayer) {
+        console.error(`❌ Player ${player.username} not found in PostgreSQL, creating now...`);
+        await this.postgres.createPlayer(player.username, player.color);
+        console.log(`✅ Player ${player.username} created in PostgreSQL`);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to verify/create player in PostgreSQL:`, error);
+      client.send('error', { message: 'Datenbankfehler beim Erstellen des Spielers' });
+      return;
+    }
+    
     const def = BUILDING_DEFINITIONS[command.buildingType];
     if (!def) return;
     
@@ -614,7 +805,8 @@ export class GameRoom extends Room<GameRoomState> {
     building.owner = player.username; // Verwende username als Owner
     building.level = 1;
     building.constructionStartTime = Date.now();
-    building.constructionEndTime = Date.now() + (def.constructionTime * 1000);
+    // Apply TIME_MULTIPLIER to construction time
+    building.constructionEndTime = Date.now() + ((def.constructionTime * 1000) / TIME_MULTIPLIER);
     building.constructionProgress = 0;
     
     console.log(`🏗️ Building started: ${command.buildingType} at (${command.position.q}, ${command.position.r}), will finish at ${new Date(building.constructionEndTime).toLocaleString()}`);
@@ -697,9 +889,9 @@ export class GameRoom extends Room<GameRoomState> {
     if (tech.cost.iron) player.iron -= tech.cost.iron;
     if (tech.cost.gold) player.gold -= tech.cost.gold;
     
-    // Forschung starten
+    // Forschung starten - Apply TIME_MULTIPLIER to research time
     player.currentResearch = command.technology;
-    player.researchEndTime = Date.now() + tech.researchTime * 1000;
+    player.researchEndTime = Date.now() + ((tech.researchTime * 1000) / TIME_MULTIPLIER);
   }
 
   private handleCreateTradeOffer(client: Client, command: CreateTradeOfferCommand) {
@@ -776,6 +968,479 @@ export class GameRoom extends Room<GameRoomState> {
       amount: command.amount,
       totalCost
     });
+  }
+
+  // ===========================
+  // UNIT COMMANDS
+  // ===========================
+
+  private async handleRecruitUnit(client: Client, command: any) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+
+    const { buildingId, unitType } = command;
+    
+    // Prüfe ob Building existiert und dem Spieler gehört
+    const building = this.state.buildings.get(buildingId);
+    if (!building || building.owner !== player.username) {
+      client.send('error', { message: 'Gebäude nicht gefunden' });
+      console.log(`❌ Building ${buildingId} not found or not owned by ${player.username}`);
+      return;
+    }
+
+    // Nur Kaserne kann Units rekrutieren
+    if (building.type !== 'barracks') {
+      client.send('error', { message: 'Nur Kasernen können Einheiten rekrutieren' });
+      return;
+    }
+
+    // Prüfe ob Building fertig gebaut ist
+    if (building.constructionProgress < 1) {
+      client.send('error', { message: 'Gebäude noch nicht fertig' });
+      return;
+    }
+
+    const unitDef = UNIT_DEFINITIONS[unitType as keyof typeof UNIT_DEFINITIONS];
+    if (!unitDef) return;
+
+    // Prüfe Ressourcen
+    if (
+      (unitDef.cost.wood && player.wood < unitDef.cost.wood) ||
+      (unitDef.cost.stone && player.stone < (unitDef.cost.stone || 0)) ||
+      (unitDef.cost.iron && player.iron < unitDef.cost.iron) ||
+      (unitDef.cost.gold && player.gold < unitDef.cost.gold) ||
+      (unitDef.cost.food && player.food < unitDef.cost.food)
+    ) {
+      client.send('error', { message: 'Nicht genug Ressourcen' });
+      return;
+    }
+
+    // Kosten abziehen
+    if (unitDef.cost.wood) player.wood -= unitDef.cost.wood;
+    if (unitDef.cost.stone) player.stone -= (unitDef.cost.stone || 0);
+    if (unitDef.cost.iron) player.iron -= (unitDef.cost.iron || 0);
+    if (unitDef.cost.gold) player.gold -= (unitDef.cost.gold || 0);
+    if (unitDef.cost.food) player.food -= (unitDef.cost.food || 0);
+
+    // Erstelle Unit auf dem Building-Tile
+    const unit = new (await import('./GameRoomState.js')).UnitState();
+    unit.id = `${player.username}_unit_${Date.now()}`;
+    unit.type = unitType;
+    unit.q = building.q;
+    unit.r = building.r;
+    unit.owner = player.username;
+    unit.health = unitDef.health;
+
+    this.state.units.set(unit.id, unit);
+
+    // Speichere in DB
+    await this.postgres.createUnit({
+      id: unit.id,
+      type: unit.type,
+      q: unit.q,
+      r: unit.r,
+      owner: unit.owner,
+      health: unit.health,
+      movement_remaining: unitDef.movementRange
+    });
+
+    console.log(`🎖️ Unit rekrutiert: ${unitType} für ${player.username}`);
+    
+    // Trigger initial exploration for newly recruited unit
+    this.handleUnitExploration(player.username, unit, unitDef).catch(console.error);
+  }
+
+  private async handleMoveUnit(client: Client, command: MoveUnitCommand) {
+    console.log(`🎯 handleMoveUnit called: unitId=${command.unitId}, destination=(${command.destination.q},${command.destination.r})`);
+    
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+
+    const unit = this.state.units.get(command.unitId);
+    if (!unit || unit.owner !== player.username) {
+      client.send('error', { message: 'Einheit nicht gefunden' });
+      return;
+    }
+
+    const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
+    if (!unitDef) return;
+
+    // Check if unit is already moving
+    if (this.movingUnits.has(command.unitId)) {
+      client.send('error', { message: 'Einheit bewegt sich bereits' });
+      return;
+    }
+
+    // Find path using A* pathfinding
+    const start: HexCoord = { q: unit.q, r: unit.r };
+    const goal: HexCoord = command.destination;
+
+    console.log(`🔍 Finding path from (${start.q},${start.r}) to (${goal.q},${goal.r})`);
+
+    const isPassable = (coord: HexCoord): boolean => {
+      const key = hexToKey(coord);
+      const tile = this.state.tiles.get(key);
+      if (!tile) return false;
+      
+      // Check if tile is owned by enemy
+      if (tile.owner && tile.owner !== player.username) return false;
+      
+      // Check if biome is passable (movementMultiplier > 0)
+      const biomeDef = BIOME_DEFINITIONS[tile.biome as keyof typeof BIOME_DEFINITIONS];
+      return biomeDef && biomeDef.movementMultiplier > 0;
+    };
+
+    const path = findPath(start, goal, isPassable);
+    
+    console.log(`📍 Path result:`, path);
+    
+    if (!path || path.length === 0) {
+      client.send('error', { message: 'Kein Weg zum Ziel gefunden' });
+      return;
+    }
+
+    // Path includes start position, so we need at least 2 tiles (start + destination)
+    if (path.length < 2) {
+      client.send('error', { message: 'Bereits am Ziel' });
+      return;
+    }
+
+    // Calculate time for first MOVE (skip index 0 which is current position)
+    const firstMoveTile = path[1];
+    const firstTileKey = hexToKey(firstMoveTile);
+    const firstTileState = this.state.tiles.get(firstTileKey);
+    
+    if (!firstTileState) {
+      client.send('error', { message: 'Ungültiges Ziel' });
+      return;
+    }
+
+    const firstBiomeDef = BIOME_DEFINITIONS[firstTileState.biome as keyof typeof BIOME_DEFINITIONS];
+    const firstTileDuration = this.calculateTileMovementTime(unitDef, firstBiomeDef);
+
+    // Store movement state (start at index 1 to skip current position)
+    const now = Date.now();
+    this.movingUnits.set(command.unitId, {
+      unitId: command.unitId,
+      path,
+      currentTileIndex: 1, // Start at 1, not 0
+      startTime: now,
+      tileStartTime: now,
+      tileDuration: firstTileDuration
+    });
+
+    // Mark unit as moving
+    unit.isMoving = true;
+
+    console.log(`🚶 Unit ${unit.type} started moving from (${unit.q},${unit.r}) to (${goal.q},${goal.r}) - ${path.length} tiles`);
+  }
+
+  private async handleCancelMovement(client: Client, command: { unitId: string }) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+
+    const unit = this.state.units.get(command.unitId);
+    if (!unit || unit.owner !== player.username) {
+      client.send('error', { message: 'Einheit nicht gefunden' });
+      return;
+    }
+
+    // Remove from moving units
+    if (this.movingUnits.has(command.unitId)) {
+      this.movingUnits.delete(command.unitId);
+      unit.isMoving = false;
+      console.log(`⏹️ Movement cancelled for unit ${unit.type}`);
+    }
+  }
+
+  // Calculate time to move across one tile (in milliseconds)
+  private calculateTileMovementTime(unitDef: any, biomeDef: any): number {
+    const baseTime = 60000; // 1 minute = 60000ms
+    const unitSpeed = unitDef.speedMultiplier || 1.0;
+    const biomeSpeed = biomeDef.movementMultiplier || 1.0;
+    
+    // Apply TIME_MULTIPLIER to speed up in dev mode
+    const totalTime = (baseTime * unitSpeed * biomeSpeed) / TIME_MULTIPLIER;
+    
+    console.log(`⏱️ Movement time: ${baseTime}ms base × ${unitSpeed} unit × ${biomeSpeed} biome ÷ ${TIME_MULTIPLIER}x = ${totalTime}ms (${(totalTime/1000).toFixed(1)}s)`);
+    return totalTime;
+  }
+
+  // Update all moving units (called every frame)
+  private updateUnitMovements(now: number) {
+    const toRemove: string[] = [];
+    
+    this.movingUnits.forEach((movement, unitId) => {
+      const unit = this.state.units.get(unitId);
+      if (!unit) {
+        toRemove.push(unitId);
+        return;
+      }
+
+      const elapsed = now - movement.tileStartTime;
+      
+      // Check if unit reached current tile
+      if (elapsed >= movement.tileDuration) {
+        const nextTile = movement.path[movement.currentTileIndex];
+        
+        // Move unit to next tile
+        unit.q = nextTile.q;
+        unit.r = nextTile.r;
+        
+        console.log(`📍 Unit ${unit.type} reached tile (${nextTile.q},${nextTile.r})`);
+        
+        // Trigger exploration for this tile
+        const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
+        if (unitDef) {
+          this.handleUnitExploration(unit.owner, unit, unitDef).catch(console.error);
+        }
+        
+        // Update visibility for the player (visible vs explored tiles may have changed)
+        this.updatePlayerVisibility(unit.owner).catch(console.error);
+        
+        // Check if journey complete
+        if (movement.currentTileIndex >= movement.path.length - 1) {
+          toRemove.push(unitId);
+          unit.isMoving = false;
+          console.log(`✅ Unit ${unit.type} completed movement to (${nextTile.q},${nextTile.r})`);
+          
+          // Update DB
+          this.postgres.moveUnit(unitId, unit.q, unit.r, 0).catch(console.error);
+        } else {
+          // Advance to next tile
+          movement.currentTileIndex++;
+          const nextTargetTile = movement.path[movement.currentTileIndex];
+          const tileKey = hexToKey(nextTargetTile);
+          const tileState = this.state.tiles.get(tileKey);
+          
+          if (tileState) {
+            const biomeDef = BIOME_DEFINITIONS[tileState.biome as keyof typeof BIOME_DEFINITIONS];
+            const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
+            
+            movement.tileStartTime = now;
+            movement.tileDuration = this.calculateTileMovementTime(unitDef, biomeDef);
+          } else {
+            // Invalid tile, stop movement
+            toRemove.push(unitId);
+            console.error(`❌ Unit ${unit.type} reached invalid tile, stopping`);
+          }
+        }
+      }
+    });
+    
+    // Remove completed movements
+    toRemove.forEach(id => this.movingUnits.delete(id));
+  }
+
+  // Exploration-Update wenn Unit sich bewegt (oder spawnt)
+  private async handleUnitExploration(
+    playerUsername: string,
+    unit: any,
+    unitDef: any
+  ) {
+    // Hole Tile-Biom an Unit-Position
+    const unitTileKey = hexToKey({ q: unit.q, r: unit.r });
+    const unitTile = this.state.tiles.get(unitTileKey);
+    if (!unitTile) return;
+
+    // Berechne Sichtweite mit Line-of-Sight
+    const unitVisionBonus = unitDef.visionBonus || 0;
+
+    // Sammle sichtbare Tiles mit LoS check
+    const newlyVisible: Array<{ q: number; r: number }> = [];
+    
+    this.state.tiles.forEach((tile) => {
+      if (this.canSeeTile(
+        { q: unit.q, r: unit.r },
+        unitTile.biome,
+        unitVisionBonus,
+        { q: tile.q, r: tile.r }
+      )) {
+        newlyVisible.push({ q: tile.q, r: tile.r });
+      }
+    });
+
+    if (newlyVisible.length > 0) {
+      // Speichere als explored
+      await this.postgres.addExploredTiles(playerUsername, newlyVisible);
+
+      // Sende Update an Client
+      const client = this.clients.find(c => {
+        const p = this.state.players.get(c.sessionId);
+        return p && p.username === playerUsername;
+      });
+
+      if (client) {
+        const exploreTiles = newlyVisible.map(coord => {
+          const tile = this.state.tiles.get(hexToKey(coord));
+          return tile ? {
+            key: hexToKey(coord),
+            q: tile.q,
+            r: tile.r,
+            biome: tile.biome,
+            fertility: tile.fertility,
+            owner: tile.owner,
+            resources: tile.resources.map(r => ({ type: r.type, amount: r.amount }))
+          } : null;
+        }).filter(t => t !== null);
+
+        client.send('newlyExplored', { tiles: exploreTiles });
+      }
+
+      console.log(`🔭 ${playerUsername} hat ${newlyVisible.length} neue Tiles erkundet`);
+    }
+  }
+
+  // Calculate if a tile is visible with Line-of-Sight check
+  // Vision is reduced by terrain between observer and target
+  private canSeeTile(
+    observerPos: { q: number; r: number },
+    observerBiome: string,
+    observerVisionBonus: number,
+    targetPos: { q: number; r: number }
+  ): boolean {
+    const baseVisionRange = this.getBiomeViewDistance(observerBiome) + observerVisionBonus;
+    
+    // Calculate distance
+    const dq = targetPos.q - observerPos.q;
+    const dr = targetPos.r - observerPos.r;
+    const distance = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+    
+    // Too far away
+    if (distance > baseVisionRange) return false;
+    if (distance === 0) return true; // Same tile
+    
+    // Get line of tiles between observer and target
+    const line = hexLine(observerPos, targetPos);
+    
+    // Calculate effective vision range considering terrain
+    // The visionBonus helps to see through difficult terrain
+    let remainingVision = baseVisionRange;
+    
+    // Check each tile in the line (except the first one, which is the observer)
+    for (let i = 1; i < line.length - 1; i++) { // Exclude target tile itself
+      const checkTile = this.state.tiles.get(hexToKey(line[i]));
+      if (checkTile) {
+        const biomeViewDistance = this.getBiomeViewDistance(checkTile.biome);
+        
+        // Dense terrain reduces remaining vision
+        // Good terrain (high viewDistance) barely reduces it
+        // Poor terrain (low viewDistance) reduces it significantly
+        const visionCost = Math.max(0, 5 - biomeViewDistance); // 0-5 cost
+        remainingVision -= visionCost * 0.3; // Each point of difficulty costs 0.3 tiles of vision
+        
+        if (remainingVision < i) {
+          // Can't see through this terrain anymore
+          return false;
+        }
+      }
+    }
+    
+    // Can see if we have enough remaining vision to reach the target
+    return remainingVision >= distance;
+  }
+
+  // Update visibility for a player (recalculate visible vs explored)
+  // Only sends changed tiles to reduce network traffic
+  private async updatePlayerVisibility(playerUsername: string) {
+    const client = this.clients.find(c => {
+      const p = this.state.players.get(c.sessionId);
+      return p && p.username === playerUsername;
+    });
+
+    if (!client) return;
+
+    // Calculate current visible tiles
+    const visibleKeys = new Set<string>();
+    
+    // 1. Owned tiles
+    this.state.tiles.forEach(tile => {
+      if (tile.owner === playerUsername) {
+        const key = hexToKey({ q: tile.q, r: tile.r });
+        visibleKeys.add(key);
+        
+        // Add tiles in viewDistance with LoS check
+        this.state.tiles.forEach((t2, k2) => {
+          if (this.canSeeTile(
+            { q: tile.q, r: tile.r },
+            tile.biome,
+            0, // No vision bonus from territory
+            { q: t2.q, r: t2.r }
+          )) {
+            visibleKeys.add(k2);
+          }
+        });
+      }
+    });
+    
+    // 2. Units' vision
+    this.state.units.forEach(unit => {
+      if (unit.owner === playerUsername) {
+        const unitTile = this.state.tiles.get(hexToKey({ q: unit.q, r: unit.r }));
+        if (unitTile) {
+          const unitDef = UNIT_DEFINITIONS[unit.type as keyof typeof UNIT_DEFINITIONS];
+          const unitVisionBonus = unitDef?.visionBonus || 0;
+          
+          this.state.tiles.forEach((tile, key) => {
+            if (this.canSeeTile(
+              { q: unit.q, r: unit.r },
+              unitTile.biome,
+              unitVisionBonus,
+              { q: tile.q, r: tile.r }
+            )) {
+              visibleKeys.add(key);
+            }
+          });
+        }
+      }
+    });
+    
+    // Load explored tiles from DB
+    const exploredFromDB = await this.postgres.getExploredTiles(playerUsername);
+    const exploredKeys = new Set<string>(
+      exploredFromDB.map(t => hexToKey({ q: t.q, r: t.r }))
+    );
+    
+    // Prepare tile data
+    const visibleTiles: Array<any> = [];
+    const exploredOnlyTiles: Array<any> = [];
+    
+    visibleKeys.forEach(key => {
+      const tile = this.state.tiles.get(key);
+      if (tile) {
+        visibleTiles.push({
+          key,
+          q: tile.q,
+          r: tile.r,
+          biome: tile.biome,
+          fertility: tile.fertility,
+          owner: tile.owner,
+          resources: tile.resources.map(r => ({ type: r.type, amount: r.amount }))
+        });
+      }
+    });
+    
+    exploredKeys.forEach(key => {
+      if (!visibleKeys.has(key)) {
+        const tile = this.state.tiles.get(key);
+        if (tile) {
+          exploredOnlyTiles.push({
+            key,
+            q: tile.q,
+            r: tile.r,
+            biome: tile.biome
+          });
+        }
+      }
+    });
+    
+    // Send updates - use 'visibilityUpdate' message to replace old tiles
+    client.send('visibilityUpdate', { 
+      visibleTiles,
+      exploredTiles: exploredOnlyTiles
+    });
+    
+    console.log(`👁️ Updated visibility for ${playerUsername}: ${visibleTiles.length} visible, ${exploredOnlyTiles.length} explored-only`);
   }
 
   // ===========================
@@ -943,7 +1608,7 @@ export class GameRoom extends Room<GameRoomState> {
       // Sende aktualisierte sichtbare Tiles an Client
       const player = this.state.players.get(client.sessionId);
       if (player) {
-        this.sendVisibleTilesToClient(client.sessionId, player.username, isAdmin);
+        await this.sendVisibleAndExploredTilesToClient(client.sessionId, player.username, isAdmin);
       }
     }
   }
@@ -952,40 +1617,42 @@ export class GameRoom extends Room<GameRoomState> {
   private filterVisibleChunks(
     playerId: string, 
     requestedChunks: Array<{ chunkX: number; chunkY: number }>,
-    visionRadius: number
+    _visionRadius: number // Nicht mehr verwendet, stattdessen Biome-viewDistance
   ): Array<{ chunkX: number; chunkY: number }> {
     const CHUNK_SIZE = 16;
     
-    // Sammle alle Tiles des Spielers
-    const playerTiles: Set<string> = new Set();
-    this.state.tiles.forEach((tile, key) => {
+    // Sammle alle Tiles des Spielers mit ihrem Biom
+    const playerTiles: Array<{ q: number; r: number; biome: string }> = [];
+    this.state.tiles.forEach((tile) => {
       if (tile.owner === playerId) {
-        playerTiles.add(key);
+        playerTiles.push({ q: tile.q, r: tile.r, biome: tile.biome });
       }
     });
     
-    if (playerTiles.size === 0) {
+    if (playerTiles.length === 0) {
       return []; // Spieler hat keine Tiles -> keine Sicht
     }
     
-    // Berechne sichtbare Tile-Bereiche (mit Vision-Radius)
+    // Berechne sichtbare Tile-Bereiche (mit Biome-spezifischer viewDistance)
     const visibleChunks = new Set<string>();
     
-    playerTiles.forEach(tileKey => {
-      const [qStr, rStr] = tileKey.split(',');
-      const q = parseInt(qStr);
-      const r = parseInt(rStr);
+    playerTiles.forEach(playerTile => {
+      // Hole viewDistance für dieses Tile
+      const biomeViewDistance = this.getBiomeViewDistance(playerTile.biome);
+      
+      // Mindestens direkte Nachbarn (distance = 1) sind immer sichtbar
+      const viewDistance = Math.max(1, biomeViewDistance);
       
       // Für jedes Spieler-Tile: Berechne sichtbare Tiles im Radius
-      for (let dq = -visionRadius; dq <= visionRadius; dq++) {
-        for (let dr = -visionRadius; dr <= visionRadius; dr++) {
+      for (let dq = -viewDistance; dq <= viewDistance; dq++) {
+        for (let dr = -viewDistance; dr <= viewDistance; dr++) {
           const ds = -dq - dr;
-          if (Math.abs(dq) <= visionRadius && 
-              Math.abs(dr) <= visionRadius && 
-              Math.abs(ds) <= visionRadius) {
+          if (Math.abs(dq) <= viewDistance && 
+              Math.abs(dr) <= viewDistance && 
+              Math.abs(ds) <= viewDistance) {
             
-            const visQ = q + dq;
-            const visR = r + dr;
+            const visQ = playerTile.q + dq;
+            const visR = playerTile.r + dr;
             
             // Berechne Chunk für dieses sichtbare Tile
             const chunkX = Math.floor(visQ / CHUNK_SIZE);

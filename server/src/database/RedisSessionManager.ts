@@ -23,6 +23,7 @@ export interface PlayerSessionData {
   iron: number;
   gold: number;
   food: number;
+  fish: number;
   
   // Storage Capacity
   storageWood: number;
@@ -30,6 +31,7 @@ export interface PlayerSessionData {
   storageIron: number;
   storageGold: number;
   storageFood: number;
+  storageFish: number;
   
   // Research (ticking progress)
   currentResearch: string | null;

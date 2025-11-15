@@ -26,7 +26,8 @@ export enum ResourceType {
   STONE = 'stone',
   IRON = 'iron',
   GOLD = 'gold',
-  FOOD = 'food'
+  FOOD = 'food',
+  FISH = 'fish'
 }
 
 export interface Resources {
@@ -35,6 +36,7 @@ export interface Resources {
   [ResourceType.IRON]: number;
   [ResourceType.GOLD]: number;
   [ResourceType.FOOD]: number;
+  [ResourceType.FISH]: number;
 }
 
 // ===========================
@@ -79,7 +81,8 @@ export interface BuildingDefinition {
 export enum UnitType {
   WARRIOR = 'warrior',
   ARCHER = 'archer',
-  CAVALRY = 'cavalry'
+  CAVALRY = 'cavalry',
+  SCOUT = 'scout'
 }
 
 export interface Unit {
@@ -100,9 +103,11 @@ export interface UnitDefinition {
   upkeep: Partial<Resources>; // Pro Minute
   health: number;
   movementRange: number;
+  speedMultiplier: number; // 1.0 = normal, 1.5 = fast, 0.8 = slow
   attackPower: number;
   defense: number;
   recruitmentTime: number; // Sekunden
+  visionBonus?: number; // Zusätzliche Sichtweite (addiert zu Biome viewDistance)
 }
 
 // ===========================
@@ -210,17 +215,64 @@ export interface GameState {
 
 export interface HexTile {
   position: HexCoord;
-  terrain: TerrainType;
+  biome: BiomeType;      // Biome-System
   resourceNode?: ResourceNode;
   owner?: string; // Spieler-ID
+  
+  // Biome-spezifische Eigenschaften
+  fertility?: number;    // 0-1, für Farming
 }
 
-export enum TerrainType {
-  GRASS = 'grass',
-  FOREST = 'forest',
-  MOUNTAIN = 'mountain',
-  WATER = 'water',
-  DESERT = 'desert'
+// ===========================
+// BIOMES
+// ===========================
+
+export enum BiomeType {
+  DECIDUOUS_FOREST = 'deciduous_forest',  // Laubwald (lichter)
+  CONIFEROUS_FOREST = 'coniferous_forest', // Nadelwald (dichter)
+  GRASSLAND = 'grassland',                 // Grassland / Ebene
+  HILLS = 'hills',                         // Hügel
+  MOUNTAINS = 'mountains',                 // Gebirge
+  SWAMP = 'swamp',                         // Sumpf/Moor
+  STEPPE = 'steppe',                       // Steppe/Trockenland
+  DESERT = 'desert',                       // Wüste
+  OCEAN = 'ocean',                         // Ozean (tiefes Wasser)
+  LAKE = 'lake',                           // See (flaches Wasser auf Land)
+  RIVER = 'river'                          // Fluss
+}
+
+/**
+ * Ressourcen-Spawn-Konfiguration für ein Biom
+ */
+export interface BiomeResourceSpawn {
+  resourceType: ResourceType;
+  probability: { min: number; max: number }; // Wahrscheinlichkeit 0-1
+  amount: { min: number; max: number };      // Menge der Ressource
+}
+
+/**
+ * Definition eines Bioms mit all seinen Eigenschaften
+ */
+export interface BiomeDefinition {
+  type: BiomeType;
+  name: string;
+  description: string;
+  
+  // Sichtweite (in Hex-Feldern)
+  viewDistance: number;
+  
+  // Bewegungsgeschwindigkeit (Multiplikator)
+  // 1.0 = normal, 0.5 = halb so schnell, 1.5 = 50% schneller
+  movementMultiplier: number;
+  
+  // Fruchtbarkeit (für Farming/Nahrungsproduktion)
+  fertility: { min: number; max: number }; // 0-1, wird später in TileDetails definiert
+  
+  // Welche Ressourcen können spawnen
+  resourceSpawns: BiomeResourceSpawn[];
+  
+  // Visuelle Eigenschaften (für später)
+  color?: string; // Hex color für Minimap
 }
 
 export interface ResourceNode {
@@ -242,6 +294,11 @@ export interface BuildCommand {
 export interface MoveUnitCommand {
   unitId: string;
   destination: HexCoord;
+}
+
+export interface RecruitUnitCommand {
+  buildingId: string;  // Kaserne ID
+  unitType: UnitType;
 }
 
 export interface ResearchCommand {

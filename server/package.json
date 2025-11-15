@@ -13,7 +13,9 @@
     "postgres-stats": "tsx src/scripts/postgresStats.ts",
     "cleanup-mongodb": "tsx src/scripts/cleanupMongoDB.ts",
     "clear-db": "tsx src/scripts/clearDatabase.ts",
-    "reset-db": "tsx src/scripts/resetDatabase.ts"
+    "reset-db": "tsx src/scripts/resetDatabase.ts",
+    "complete-cleanup": "tsx src/scripts/completeCleanup.ts",
+    "recreate-postgres": "tsx src/scripts/recreatePostgresSchema.ts"
   },
   "dependencies": {
     "@colyseus/core": "^0.15.0",
@@ -32,6 +34,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.1",
+    "@types/pg": "^8.15.6",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

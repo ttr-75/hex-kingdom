@@ -11,12 +11,14 @@ export interface PlayerState {
   iron: number;
   gold: number;
   food: number;
+  fish: number;
   
   storageWood: number;
   storageStone: number;
   storageIron: number;
   storageGold: number;
   storageFood: number;
+  storageFish: number;
   
   researchedTechs: string[];
   currentResearch: string;
@@ -42,6 +44,7 @@ export interface UnitState {
   r: number;
   owner: string;
   health: number;
+  isMoving: boolean;
 }
 
 export interface TradeOfferState {
@@ -53,13 +56,18 @@ export interface TradeOfferState {
   expiresAt: number;
 }
 
+export interface TileResource {
+  type: string;
+  amount: number;
+}
+
 export interface HexTileState {
   q: number;
   r: number;
-  terrain: string;
+  biome: string;          // Biome-System
+  fertility: number;      // Fruchtbarkeit 0-1
   owner: string;
-  resourceType: string;
-  resourceAmount: number;
+  resources: TileResource[]; // Mehrere Ressourcen möglich
 }
 
 export interface GameRoomState {

@@ -34,6 +34,10 @@ export default function ResourcesPanel({ player }: ResourcesPanelProps) {
           <span className="resource-icon">🌾</span>
           <span className="resource-amount">{Math.floor(player.food)}</span>
         </div>
+        <div className="resource-item">
+          <span className="resource-icon">🐟</span>
+          <span className="resource-amount">{Math.floor(player.fish)}</span>
+        </div>
       </div>
     </div>
   );

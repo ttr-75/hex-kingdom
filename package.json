@@ -11,6 +11,7 @@
     "clean": "if exist client\\node_modules\\.vite rmdir /s /q client\\node_modules\\.vite",
     "dev": " npm run build:shared && concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "npm run dev --workspace=server",
+    "dev:server-genWorld": "npm run generate-world --workspace=server",
     "dev:client": "npm run dev --workspace=client",
     "build": "npm run build --workspaces",
     "build:shared": "npm run build --workspace=shared",

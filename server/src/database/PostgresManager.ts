@@ -1,4 +1,4 @@
-import { Pool, PoolClient, QueryResult } from 'pg';
+import { Pool } from 'pg';
 
 /**
  * PostgresManager - Für relationale Daten mit referentieller Integrität
@@ -150,6 +150,37 @@ export class PostgresManager {
         )
       `);
 
+      // Tile Exploration Table (Fog of War)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS tile_exploration (
+          player_username VARCHAR(255) NOT NULL,
+          q INTEGER NOT NULL,
+          r INTEGER NOT NULL,
+          first_seen TIMESTAMP DEFAULT NOW(),
+          last_seen TIMESTAMP DEFAULT NOW(),
+          PRIMARY KEY (player_username, q, r),
+          CONSTRAINT fk_exploration_player FOREIGN KEY (player_username)
+            REFERENCES players(username) ON DELETE CASCADE
+        )
+      `);
+
+      // Units Table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS units (
+          id VARCHAR(255) PRIMARY KEY,
+          type VARCHAR(50) NOT NULL,
+          q INTEGER NOT NULL,
+          r INTEGER NOT NULL,
+          owner VARCHAR(255) NOT NULL,
+          health INTEGER NOT NULL,
+          movement_remaining INTEGER NOT NULL,
+          created_at TIMESTAMP DEFAULT NOW(),
+          last_moved TIMESTAMP,
+          CONSTRAINT fk_unit_owner FOREIGN KEY (owner)
+            REFERENCES players(username) ON DELETE CASCADE
+        )
+      `);
+
       // Indexes for performance
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_buildings_owner ON buildings(owner)
@@ -159,6 +190,18 @@ export class PostgresManager {
       `);
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_tile_ownership_owner ON tile_ownership(owner)
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_tile_exploration_player ON tile_exploration(player_username)
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_tile_exploration_coords ON tile_exploration(q, r)
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_units_owner ON units(owner)
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_units_coords ON units(q, r)
       `);
 
       await client.query('COMMIT');
@@ -326,6 +369,196 @@ export class PostgresManager {
   }
 
   // ===========================
+  // TILE EXPLORATION (FOG OF WAR)
+  // ===========================
+
+  /**
+   * Markiere Tiles als vom Spieler gesehen (für Fog of War)
+   * Verwendet UPSERT: Erstellt neue oder aktualisiert last_seen
+   */
+  async addExploredTiles(
+    playerUsername: string,
+    tiles: Array<{ q: number; r: number }>
+  ): Promise<void> {
+    if (tiles.length === 0) return;
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Batch INSERT mit ON CONFLICT
+      const values: any[] = [];
+      const placeholders: string[] = [];
+
+      tiles.forEach((tile, index) => {
+        const offset = index * 3;
+        placeholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3})`);
+        values.push(playerUsername, tile.q, tile.r);
+      });
+
+      await client.query(
+        `INSERT INTO tile_exploration (player_username, q, r)
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT (player_username, q, r) DO UPDATE
+         SET last_seen = NOW()`,
+        values
+      );
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('❌ Failed to add explored tiles:', error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Hole alle Tiles die ein Spieler bereits gesehen hat
+   */
+  async getExploredTiles(
+    playerUsername: string
+  ): Promise<Array<{ q: number; r: number; first_seen: Date; last_seen: Date }>> {
+    const result = await this.pool.query<{
+      q: number;
+      r: number;
+      first_seen: Date;
+      last_seen: Date;
+    }>(
+      'SELECT q, r, first_seen, last_seen FROM tile_exploration WHERE player_username = $1',
+      [playerUsername]
+    );
+    return result.rows;
+  }
+
+  /**
+   * Prüfe ob ein Spieler ein bestimmtes Tile bereits gesehen hat
+   */
+  async hasExploredTile(playerUsername: string, q: number, r: number): Promise<boolean> {
+    const result = await this.pool.query(
+      'SELECT 1 FROM tile_exploration WHERE player_username = $1 AND q = $2 AND r = $3',
+      [playerUsername, q, r]
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Lösche Exploration-Daten eines Spielers (für Testing/Reset)
+   */
+  async clearPlayerExploration(playerUsername: string): Promise<void> {
+    await this.pool.query(
+      'DELETE FROM tile_exploration WHERE player_username = $1',
+      [playerUsername]
+    );
+  }
+
+  // ===========================
+  // UNITS
+  // ===========================
+
+  /**
+   * Erstelle eine neue Unit
+   */
+  async createUnit(unit: {
+    id: string;
+    type: string;
+    q: number;
+    r: number;
+    owner: string;
+    health: number;
+    movement_remaining: number;
+  }): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO units (id, type, q, r, owner, health, movement_remaining)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [unit.id, unit.type, unit.q, unit.r, unit.owner, unit.health, unit.movement_remaining]
+    );
+  }
+
+  /**
+   * Hole alle Units eines Spielers
+   */
+  async getPlayerUnits(owner: string): Promise<Array<any>> {
+    const result = await this.pool.query(
+      'SELECT * FROM units WHERE owner = $1',
+      [owner]
+    );
+    return result.rows;
+  }
+
+  /**
+   * Hole Unit an bestimmter Position
+   */
+  async getUnitAtPosition(q: number, r: number): Promise<any | null> {
+    const result = await this.pool.query(
+      'SELECT * FROM units WHERE q = $1 AND r = $2',
+      [q, r]
+    );
+    return result.rows[0] || null;
+  }
+
+  /**
+   * Bewege eine Unit zu neuer Position
+   */
+  async moveUnit(
+    unitId: string,
+    newQ: number,
+    newR: number,
+    movementRemaining: number
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE units 
+       SET q = $2, r = $3, movement_remaining = $4, last_moved = NOW()
+       WHERE id = $1`,
+      [unitId, newQ, newR, movementRemaining]
+    );
+  }
+
+  /**
+   * Update Unit Health
+   */
+  async updateUnitHealth(unitId: string, health: number): Promise<void> {
+    if (health <= 0) {
+      // Unit stirbt
+      await this.pool.query('DELETE FROM units WHERE id = $1', [unitId]);
+    } else {
+      await this.pool.query(
+        'UPDATE units SET health = $2 WHERE id = $1',
+        [unitId, health]
+      );
+    }
+  }
+
+  /**
+   * Reset Movement für alle Units eines Spielers (neuer Turn)
+   */
+  async resetPlayerUnitMovement(owner: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE units u
+       SET movement_remaining = (
+         SELECT 
+           CASE 
+             WHEN u.type = 'warrior' THEN 3
+             WHEN u.type = 'archer' THEN 3
+             WHEN u.type = 'cavalry' THEN 5
+             WHEN u.type = 'scout' THEN 6
+             ELSE 3
+           END
+       )
+       WHERE owner = $1`,
+      [owner]
+    );
+  }
+
+  /**
+   * Lösche Unit
+   */
+  async deleteUnit(unitId: string): Promise<void> {
+    await this.pool.query('DELETE FROM units WHERE id = $1', [unitId]);
+  }
+
+  // ===========================
   // TRANSACTIONS
   // ===========================
 
@@ -335,7 +568,7 @@ export class PostgresManager {
   async buildBuildingTransaction(
     owner: string,
     building: Omit<Building, 'created_at' | 'completed_at'>,
-    resourceCost: { wood?: number; stone?: number; iron?: number; gold?: number }
+    _resourceCost: { wood?: number; stone?: number; iron?: number; gold?: number }
   ): Promise<Building> {
     const client = await this.pool.connect();
 

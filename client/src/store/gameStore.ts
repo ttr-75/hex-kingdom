@@ -7,13 +7,17 @@ interface GameStore {
   sessionId: string | null;
   players: Map<string, PlayerState>;
   buildings: Map<string, BuildingState>;
+  units: Map<string, any>; // UnitState
   tiles: Map<string, HexTileState>;
+  exploredTiles: Map<string, HexTileState>; // Fog of War: bereits gesehene Tiles
   
   // Actions
   setRoom: (room: Room<GameRoomState>) => void;
   updatePlayers: (players: Map<string, PlayerState>) => void;
   updateBuildings: (buildings: Map<string, BuildingState>) => void;
+  updateUnits: (units: Map<string, any>) => void;
   updateTiles: (tiles: Map<string, HexTileState>) => void;
+  updateExploredTiles: (tiles: Map<string, HexTileState>) => void;
   disconnect: () => void;
 }
 
@@ -22,7 +26,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   sessionId: null,
   players: new Map(),
   buildings: new Map(),
+  units: new Map(),
   tiles: new Map(),
+  exploredTiles: new Map(),
   
   setRoom: (room) => {
     set({ room, sessionId: room.sessionId });
@@ -109,7 +115,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     */
     
     // Listen auf Player-Änderungen
-    room.state.players.onAdd((player, key) => {
+    (room.state.players as any).onAdd((player: any, key: string) => {
       console.log('👤 Player added:', key);
       const currentPlayers = get().players;
       const newPlayers = new Map(currentPlayers);
@@ -126,7 +132,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       });
     });
     
-    room.state.players.onChange((player, key) => {
+    (room.state.players as any).onChange((player: any, key: string) => {
       console.log('👤 Player onChange:', key);
       const currentPlayers = get().players;
       const newPlayers = new Map(currentPlayers);
@@ -134,7 +140,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ players: newPlayers });
     });
     
-    room.state.players.onRemove((player, key) => {
+    (room.state.players as any).onRemove((_player: any, key: string) => {
       console.log('👤 Player removed:', key);
       const currentPlayers = get().players;
       const newPlayers = new Map(currentPlayers);
@@ -143,7 +149,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
     
     // Listen auf Building-Änderungen
-    room.state.buildings.onAdd((building, key) => {
+    (room.state.buildings as any).onAdd((building: any, key: string) => {
       console.log('🏗️ Building added:', key, {
         progress: building.constructionProgress,
         startTime: (building as any).constructionStartTime,
@@ -188,7 +194,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       });
     });
     
-    room.state.buildings.onChange((building, key) => {
+    (room.state.buildings as any).onChange((building: any, key: string) => {
       console.log('🏗️ Building onChange:', key);
       const currentBuildings = get().buildings;
       const newBuildings = new Map(currentBuildings);
@@ -206,18 +212,78 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ buildings: newBuildings });
     });
     
-    room.state.buildings.onRemove((building, key) => {
+    (room.state.buildings as any).onRemove((_building: any, key: string) => {
       console.log('🏗️ Building removed:', key);
       const currentBuildings = get().buildings;
       const newBuildings = new Map(currentBuildings);
       newBuildings.delete(key);
       set({ buildings: newBuildings });
     });
+
+    // Listen auf Unit-Änderungen
+    (room.state.units as any).onAdd((unit: any, key: string) => {
+      console.log('🎖️ Unit added:', key);
+      const currentUnits = get().units;
+      const newUnits = new Map(currentUnits);
+      newUnits.set(key, {
+        id: unit.id,
+        type: unit.type,
+        q: unit.q,
+        r: unit.r,
+        owner: unit.owner,
+        health: unit.health,
+        isMoving: (unit as any).isMoving || false
+      });
+      set({ units: newUnits });
+
+      // Listen auf Änderungen in dieser spezifischen Unit
+      unit.onChange(() => {
+        console.log('🔄 Unit changed:', key, 'isMoving:', (unit as any).isMoving);
+        const currentUnits = get().units;
+        const newUnits = new Map(currentUnits);
+        newUnits.set(key, {
+          id: unit.id,
+          type: unit.type,
+          q: unit.q,
+          r: unit.r,
+          owner: unit.owner,
+          health: unit.health,
+          isMoving: (unit as any).isMoving || false
+        });
+        set({ units: newUnits });
+      });
+    });
+
+    (room.state.units as any).onChange((unit: any, key: string) => {
+      console.log('🎖️ Unit onChange:', key, 'isMoving:', (unit as any).isMoving);
+      const currentUnits = get().units;
+      const newUnits = new Map(currentUnits);
+      newUnits.set(key, {
+        id: unit.id,
+        type: unit.type,
+        q: unit.q,
+        r: unit.r,
+        owner: unit.owner,
+        health: unit.health,
+        isMoving: (unit as any).isMoving || false
+      });
+      set({ units: newUnits });
+    });
+
+    (room.state.units as any).onRemove((_unit: any, key: string) => {
+      console.log('🎖️ Unit removed:', key);
+      const currentUnits = get().units;
+      const newUnits = new Map(currentUnits);
+      newUnits.delete(key);
+      set({ units: newUnits });
+    });
   },
   
   updatePlayers: (players) => set({ players }),
   updateBuildings: (buildings) => set({ buildings }),
+  updateUnits: (units) => set({ units }),
   updateTiles: (tiles) => set({ tiles }),
+  updateExploredTiles: (tiles) => set({ exploredTiles: tiles }),
   
   disconnect: () => {
     const { room } = get();
@@ -229,7 +295,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       sessionId: null,
       players: new Map(),
       buildings: new Map(),
-      tiles: new Map()
+      units: new Map(),
+      tiles: new Map(),
+      exploredTiles: new Map()
     });
   }
 }));

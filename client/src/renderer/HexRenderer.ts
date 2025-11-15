@@ -1,24 +1,36 @@
 import * as PIXI from 'pixi.js';
-import { HexCoord, hexToPixel, pixelToHex } from '@hex-kingdom/shared';
+import { HexCoord, hexToPixel, pixelToHex, UnitType } from '@hex-kingdom/shared';
 import { HexTileState, BuildingState } from '../types/room-state';
 
 const HEX_SIZE = 40;
-const TERRAIN_COLORS: Record<string, number> = {
-  grass: 0x5A9B4D,      // Saftiges Grün #5A9B4D
-  forest: 0x2D5A1E,     // Dunkles Waldgrün #2D5A1E
-  mountain: 0x6B5A4C,  // Braune Berge #6B5A4C
-  water: 0x3A7CA5,     // Tiefblaues Wasser #3A7CA5
-  desert: 0xE0C99D,    // Gelbe Wüste #E0C99D
-  hills: 0x867C73     // Hellgrüne Hügel #867c73
+
+// Biome-Farben (basierend auf den definierten Biomen)
+const BIOME_COLORS: Record<string, number> = {
+  deciduous_forest: 0x4a7c3f,   // Laubwald - grün
+  coniferous_forest: 0x2d5a2d,  // Nadelwald - dunkelgrün
+  grassland: 0x7cb342,          // Grasland - hellgrün
+  hills: 0x8d6e63,              // Hügel - braun
+  mountains: 0x616161,          // Gebirge - grau
+  swamp: 0x5d4e37,              // Sumpf - dunkelbraun
+  steppe: 0xc5a777,             // Steppe - beige
+  desert: 0xe4a672,             // Wüste - sand
+  ocean: 0x1565c0,              // Ozean - tiefblau
+  lake: 0x42a5f5,               // See - blau
+  river: 0x64b5f6               // Fluss - hellblau
 };
 
-const TERRAIN_SHADOWS: Record<string, number> = {
-  grass: 0x4A8B3D,
-  forest: 0x1D4A0E,
-  mountain: 0x5B4A3C,
-  water: 0x2A6C95,
-  desert: 0xD0B98D,
-  hills: 0x6A8B4A
+const BIOME_SHADOWS: Record<string, number> = {
+  deciduous_forest: 0x3a6c2f,
+  coniferous_forest: 0x1d4a1d,
+  grassland: 0x6ca332,
+  hills: 0x7d5e53,
+  mountains: 0x515151,
+  swamp: 0x4d3e27,
+  steppe: 0xb59767,
+  desert: 0xd49662,
+  ocean: 0x0d4d9d,
+  lake: 0x3295e5,
+  river: 0x54a5e6
 };
 
 const RESOURCE_COLORS: Record<string, number> = {
@@ -30,14 +42,19 @@ const RESOURCE_COLORS: Record<string, number> = {
 
 export class HexRenderer {
   private app: PIXI.Application;
-  private mapContainer: PIXI.Container;
-  private buildingContainer: PIXI.Container;
-  private uiContainer: PIXI.Container;
+  private mapContainer!: PIXI.Container;
+  private buildingContainer!: PIXI.Container;
+  private unitContainer!: PIXI.Container;
+  private uiContainer!: PIXI.Container;
+  private movementOverlay!: PIXI.Container;
   
   private tiles: Map<string, PIXI.Graphics> = new Map();
   private buildings: Map<string, PIXI.Graphics> = new Map();
+  private units: Map<string, PIXI.Container> = new Map();
   private dragonMarkers: Map<string, PIXI.Container> = new Map();
   private territoryBorders: Map<string, PIXI.Graphics> = new Map(); // Territoriums-Grenzen
+  
+  private scoutTexture: PIXI.Texture | null = null; // Scout icon texture
   
   private camera = { x: 0, y: 0, zoom: 1 };
   private isDragging = false;
@@ -46,11 +63,19 @@ export class HexRenderer {
   private isReady = false;
   private isDestroyed = false;
   
+  // Movement mode state (unused for now)
+  // private _isMovementMode = false;
+  // private _movingUnitId: string | null = null;
+  // private _movingUnitPosition: HexCoord | null = null;
+  // private _movementPlayerUsername: string | null = null;
+  
   // Queue für Tiles die ankommen bevor der Renderer bereit ist
   private pendingTiles: Map<string, HexTileState> | null = null;
   private pendingSpawnPosition: HexCoord | null = null;
+  private pendingUnits: Map<string, any> | null = null;
   
   private onTileClick?: (coord: HexCoord) => void;
+  private onTileHover?: (coord: HexCoord | null) => void;
   private onViewportChange?: (visibleChunks: Array<{ chunkX: number; chunkY: number }>) => void;
   
   private lastViewportUpdate = 0;
@@ -75,8 +100,20 @@ export class HexRenderer {
         try { this.app.destroy(); } catch {}
         return;
       }
-      this.initContainers();
+      // Load texture first, then init containers
+      this.loadScoutTexture().then(() => {
+        this.initContainers();
+      });
     });
+  }
+  
+  private async loadScoutTexture() {
+    try {
+      this.scoutTexture = await PIXI.Assets.load('/spaeher_icon_vector.svg');
+      console.log('✅ Scout texture loaded:', this.scoutTexture);
+    } catch (err) {
+      console.error('❌ Failed to load scout texture:', err);
+    }
   }
   
   private initContainers() {
@@ -84,10 +121,14 @@ export class HexRenderer {
     
     this.mapContainer = new PIXI.Container();
     this.buildingContainer = new PIXI.Container();
+    this.unitContainer = new PIXI.Container();
     this.uiContainer = new PIXI.Container();
+    this.movementOverlay = new PIXI.Container();
     
     this.app.stage.addChild(this.mapContainer);
     this.app.stage.addChild(this.buildingContainer);
+    this.app.stage.addChild(this.unitContainer);
+    this.app.stage.addChild(this.movementOverlay);
     this.app.stage.addChild(this.uiContainer);
     
     // Zentriere Kamera
@@ -103,6 +144,13 @@ export class HexRenderer {
       console.log(`🔄 Processing ${this.pendingTiles.size} pending tiles`);
       this.updateMap(this.pendingTiles);
       this.pendingTiles = null;
+    }
+    
+    // Verarbeite pending Units
+    if (this.pendingUnits) {
+      console.log(`🔄 Processing ${this.pendingUnits.size} pending units`);
+      this.updateUnits(this.pendingUnits);
+      this.pendingUnits = null;
     }
     
     // Verarbeite pending spawn position
@@ -139,6 +187,13 @@ export class HexRenderer {
         
         this.lastMousePos = { x: e.clientX, y: e.clientY };
         this.updateTransform();
+      } else {
+        // Hover detection for movement tooltip
+        if (this.onTileHover) {
+          const worldPos = this.screenToWorld(e.clientX, e.clientY);
+          const hexCoord = pixelToHex(worldPos, HEX_SIZE);
+          this.onTileHover(hexCoord);
+        }
       }
     });
     
@@ -197,6 +252,12 @@ export class HexRenderer {
     
     this.buildingContainer.position.set(this.camera.x, this.camera.y);
     this.buildingContainer.scale.set(this.camera.zoom);
+    
+    this.unitContainer.position.set(this.camera.x, this.camera.y);
+    this.unitContainer.scale.set(this.camera.zoom);
+    
+    this.movementOverlay.position.set(this.camera.x, this.camera.y);
+    this.movementOverlay.scale.set(this.camera.zoom);
     
     // Check viewport change bei jedem Transform-Update
     this.checkViewportUpdate();
@@ -271,7 +332,7 @@ export class HexRenderer {
   }
   
   // Render hex tile
-  private drawHexagon(graphics: PIXI.Graphics, x: number, y: number, color: number, shadowColor: number, alpha = 1) {
+  private drawHexagon(graphics: PIXI.Graphics, x: number, y: number, color: number, _shadowColor: number, _alpha = 1) {
     graphics.clear();
     
     const angles = [0, 60, 120, 180, 240, 300];
@@ -288,37 +349,92 @@ export class HexRenderer {
     graphics.stroke({ width: 2, color: 0x000000, alpha: 0.4 });
   }
   
+  // Desaturate a color (make it grayscale) - amount from 0 (no change) to 1 (full gray)
+  private desaturateColor(color: number, amount: number): number {
+    const r = (color >> 16) & 0xFF;
+    const g = (color >> 8) & 0xFF;
+    const b = color & 0xFF;
+    
+    // Calculate grayscale value using luminance formula
+    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    
+    // Interpolate between original and gray
+    const newR = Math.round(r + (gray - r) * amount);
+    const newG = Math.round(g + (gray - g) * amount);
+    const newB = Math.round(b + (gray - b) * amount);
+    
+    return (newR << 16) | (newG << 8) | newB;
+  }
+  
   // Update map with tile data - nur neue Tiles hinzufügen
-  updateMap(tiles: Map<string, HexTileState>) {
+  updateMap(tiles: Map<string, HexTileState>, forceRedraw = false) {
     if (!this.isReady || !this.mapContainer) {
       console.warn('⚠️ Renderer not ready for updateMap, storing tiles in queue', { isReady: this.isReady, hasMapContainer: !!this.mapContainer, tileCount: tiles.size });
       this.pendingTiles = tiles;
       return;
     }
     
-    console.log(`🔄 updateMap called with ${tiles.size} tiles, current rendered: ${this.tiles.size}`);
+    console.log(`🔄 updateMap called with ${tiles.size} tiles, current rendered: ${this.tiles.size}, forceRedraw: ${forceRedraw}`);
     
     let newTileCount = 0;
+    let updatedTileCount = 0;
     
-    // Füge nur neue Tiles hinzu
+    // If forceRedraw, remove tiles that are not in the new set
+    if (forceRedraw) {
+      const keysToRemove: string[] = [];
+      this.tiles.forEach((graphics, key) => {
+        if (!tiles.has(key)) {
+          graphics.destroy();
+          keysToRemove.push(key);
+        }
+      });
+      keysToRemove.forEach(key => this.tiles.delete(key));
+      console.log(`🗑️ Removed ${keysToRemove.length} tiles during forceRedraw`);
+    }
+    
+    // Add or update tiles
     tiles.forEach((tile, key) => {
-      if (this.tiles.has(key)) return; // Tile existiert bereits
-      
-      newTileCount++;
-      
-      const graphics = new PIXI.Graphics();
-      this.mapContainer.addChild(graphics);
-      this.tiles.set(key, graphics);
-      
       const pixel = hexToPixel({ q: tile.q, r: tile.r }, HEX_SIZE);
-      const color = TERRAIN_COLORS[tile.terrain] || TERRAIN_COLORS.grass;
-      const shadowColor = TERRAIN_SHADOWS[tile.terrain] || TERRAIN_SHADOWS.grass;
+      
+      // Verwende Biome-System
+      const biome = tile.biome || 'grassland';  // Default fallback
+      let color = BIOME_COLORS[biome] || BIOME_COLORS.grassland;
+      const shadowColor = BIOME_SHADOWS[biome] || BIOME_SHADOWS.grassland;
+      
+      // Check if this is an explored-only tile (has biome but no owner/resources data)
+      // Explored tiles from server have only: key, q, r, biome (no owner, no resources)
+      const hasDetailedData = tile.owner !== undefined || (tile.resources && tile.resources.length > 0);
+      const isExploredOnly = !hasDetailedData;
+      
+      // Make explored-only tiles gray/desaturated
+      if (isExploredOnly) {
+        color = this.desaturateColor(color, 0.7); // 70% desaturated = grayer
+      }
+      
+      let graphics = this.tiles.get(key);
+      
+      if (!graphics) {
+        // New tile
+        newTileCount++;
+        graphics = new PIXI.Graphics();
+        this.mapContainer.addChild(graphics);
+        this.tiles.set(key, graphics);
+      } else if (forceRedraw) {
+        // Existing tile, redraw it
+        updatedTileCount++;
+      } else {
+        // Existing tile, skip if not forcing redraw
+        return;
+      }
       
       this.drawHexagon(graphics, pixel.x, pixel.y, color, shadowColor);
       
-      // Resource node indicator
-      if (tile.resourceType) {
-        const resourceColor = RESOURCE_COLORS[tile.resourceType] || 0xFFFFFF;
+      // Resource node indicator (use new resources array format)
+      // Only show resources on visible (non-explored-only) tiles
+      if (!isExploredOnly && tile.resources && tile.resources.length > 0) {
+        // Show first resource as indicator
+        const firstResource = tile.resources[0];
+        const resourceColor = RESOURCE_COLORS[firstResource.type] || 0xFFFFFF;
         const dot = new PIXI.Graphics();
         dot.circle(pixel.x, pixel.y, 8);
         dot.fill(resourceColor);
@@ -326,15 +442,17 @@ export class HexRenderer {
       }
     });
     
-    if (newTileCount > 0) {
-      console.log(`✨ Rendered ${newTileCount} new tiles (total: ${this.tiles.size})`);
+    if (newTileCount > 0 || updatedTileCount > 0) {
+      console.log(`✨ Rendered ${newTileCount} new + ${updatedTileCount} updated tiles (total: ${this.tiles.size})`);
       
       // Zeichne Territoriums-Grenzen
       this.drawTerritoryBorders(tiles);
     }
     
     // Culling: Entferne weit entfernte Chunks
-    this.cullDistantChunks();
+    if (!forceRedraw) {
+      this.cullDistantChunks();
+    }
   }
   
   // Zeichne Territoriums-Grenzen um owned Tiles
@@ -450,7 +568,7 @@ export class HexRenderer {
     let removedCount = 0;
     const tilesToRemove: string[] = [];
     
-    this.tiles.forEach((graphics, key) => {
+    this.tiles.forEach((_graphics, key) => {
       const parts = key.split(',');
       const q = parseInt(parts[0]);
       const r = parseInt(parts[1]);
@@ -524,9 +642,83 @@ export class HexRenderer {
     });
   }
   
+  // Update units
+  updateUnits(units: Map<string, any>) {
+    if (!this.isReady || !this.unitContainer) {
+      console.log('⚠️ Cannot update units - isReady:', this.isReady, 'unitContainer:', !!this.unitContainer);
+      console.log('📦 Storing units in pending queue');
+      this.pendingUnits = units;
+      return;
+    }
+    
+    console.log(`🗡️ Rendering ${units.size} units to map`);
+    
+    // Clear old units
+    this.units.forEach(g => g.destroy());
+    this.units.clear();
+    
+    units.forEach((unit, key) => {
+      console.log(`  - Rendering unit ${key} (${unit.type}) at (${unit.q}, ${unit.r}), scoutTexture=${this.scoutTexture ? 'loaded' : 'null'}`);
+      const container = new PIXI.Container();
+      const pixel = hexToPixel({ q: unit.q, r: unit.r }, HEX_SIZE);
+      container.position.set(pixel.x, pixel.y);
+      
+      // Unit representation
+      if (unit.type === UnitType.SCOUT && this.scoutTexture) {
+        console.log('  → Using SVG icon for scout');
+        // Use SVG icon for scouts
+        const sprite = new PIXI.Sprite(this.scoutTexture);
+        sprite.width = 36;
+        sprite.height = 36;
+        sprite.anchor.set(0.5);
+        container.addChild(sprite);
+      } else {
+        if (unit.type === UnitType.SCOUT) {
+          console.log('  → Scout texture not loaded, using fallback');
+        }
+        // Circle with text for other units
+        const graphics = new PIXI.Graphics();
+        graphics.circle(0, 0, 18);
+        graphics.fill(0x4CAF50);
+        graphics.circle(0, 0, 18);
+        graphics.stroke({ width: 2, color: 0x2E7D32 });
+        container.addChild(graphics);
+        
+        // Unit type indicator
+        const text = new PIXI.Text({
+          text: unit.type === UnitType.SCOUT ? '👁' : 'U',
+          style: {
+            fontSize: 14,
+            fill: 0xFFFFFF
+          }
+        });
+        text.anchor.set(0.5);
+        container.addChild(text);
+      }
+      
+      // Health bar (always show)
+      const healthBarBg = new PIXI.Graphics();
+      healthBarBg.rect(-12, 22, 24, 3);
+      healthBarBg.fill(0x333333);
+      container.addChild(healthBarBg);
+      
+      const healthBar = new PIXI.Graphics();
+      healthBar.rect(-12, 22, 24 * (unit.health / 100), 3);
+      healthBar.fill(unit.health > 70 ? 0x4CAF50 : unit.health > 30 ? 0xFFA726 : 0xFF5252);
+      container.addChild(healthBar);
+      
+      this.unitContainer.addChild(container);
+      this.units.set(key, container);
+    });
+  }
+  
   // Set click handler
   setOnTileClick(handler: (coord: HexCoord) => void) {
     this.onTileClick = handler;
+  }
+  
+  setOnTileHover(handler: (coord: HexCoord | null) => void) {
+    this.onTileHover = handler;
   }
   
   // Focus on specific hex
@@ -597,6 +789,58 @@ export class HexRenderer {
       this.mapContainer.addChild(container);
       this.dragonMarkers.set(chunkKey, container);
     });
+  }
+  
+  setMovementMode(unitId: string, unitPosition: HexCoord, playerUsername: string) {
+    // Store movement state (currently unused but kept for future use)
+    console.log(`🎯 Movement mode: unit ${unitId} at (${unitPosition.q},${unitPosition.r}) by ${playerUsername}`);
+    
+    // Highlight all visible tiles as selectable
+    this.tiles.forEach((_graphics, key) => {
+      const tile = this.parseTileKey(key);
+      if (tile) {
+        // Add semi-transparent green overlay to show clickable tiles
+        const overlay = new PIXI.Graphics();
+        const pixel = hexToPixel({ q: tile.q, r: tile.r }, HEX_SIZE);
+        
+        overlay.beginPath();
+        const hexSize = HEX_SIZE;
+        for (let i = 0; i < 6; i++) {
+          const angle = (Math.PI / 3) * i;
+          const x = pixel.x + hexSize * Math.cos(angle);
+          const y = pixel.y + hexSize * Math.sin(angle);
+          if (i === 0) overlay.moveTo(x, y);
+          else overlay.lineTo(x, y);
+        }
+        overlay.closePath();
+        overlay.fill({ color: 0x00ff00, alpha: 0.2 });
+        overlay.stroke({ color: 0x00ff00, width: 2, alpha: 0.5 });
+        
+        // Make overlay non-interactive so clicks pass through
+        overlay.eventMode = 'none';
+        
+        this.movementOverlay.addChild(overlay);
+      }
+    });
+    
+    console.log(`🎯 Movement mode activated - click any tile to move`);
+  }
+  
+  private parseTileKey(key: string): { q: number; r: number } | null {
+    const parts = key.split(',');
+    if (parts.length === 2) {
+      return { q: parseInt(parts[0]), r: parseInt(parts[1]) };
+    }
+    return null;
+  }
+  
+  clearMovementMode() {
+    console.log(`❌ Clearing movement mode`);
+    
+    // Clear movement overlay
+    this.movementOverlay.removeChildren();
+    
+    console.log(`❌ Movement mode cleared`);
   }
   
   destroy() {

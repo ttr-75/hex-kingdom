@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Background -->
+  <rect width="64" height="64" fill="#101010" />
+
+  <!-- Hood and cloak silhouette -->
+  <path
+    d="M14 40
+       Q14 24 26 16
+       Q36 10 46 16
+       Q38 18 34 26
+       Q30 22 24 22
+       Q18 22 18 30
+       Q18 36 20 40
+       Z"
+    fill="#f3e0c2" />
+
+  <!-- Face cutout -->
+  <circle cx="30" cy="28" r="5" fill="#101010" />
+
+  <!-- Spyglass -->
+  <rect x="34" y="26" width="16" height="4" rx="1" ry="1" fill="#f3e0c2" />
+  <circle cx="50" cy="28" r="3" fill="#f3e0c2" />
+  <circle cx="50" cy="28" r="2" fill="#101010" />
+
+  <!-- Shoulder / chest -->
+  <path
+    d="M16 40
+       Q24 34 32 34
+       Q40 34 46 40
+       L46 50
+       L16 50
+       Z"
+    fill="#f3e0c2" />
+
+  <!-- Arm holding spyglass -->
+  <path
+    d="M28 34
+       Q32 36 34 40
+       L30 44
+       Q26 42 24 38
+       Z"
+    fill="#f3e0c2" />
+</svg>

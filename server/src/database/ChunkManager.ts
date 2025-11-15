@@ -1,7 +1,7 @@
 import { MongoClient, Db, Collection } from 'mongodb';
-import { HexTileState } from '../rooms/GameRoomState.js';
+import { HexTileState, TileResource } from '../rooms/GameRoomState.js';
 import { hexToKey } from '@hex-kingdom/shared';
-import { TerrainType, ResourceType } from '@hex-kingdom/shared';
+import { ResourceType, BiomeType } from '@hex-kingdom/shared';
 
 const CHUNK_SIZE = 16; // 16x16 Hexagone pro Chunk (256 Tiles = kleinere Dokumente)
 
@@ -12,9 +12,9 @@ export interface ChunkData {
   tiles: Array<{
     q: number;
     r: number;
-    terrain: TerrainType;
-    resourceType?: ResourceType;
-    resourceAmount?: number;
+    biome: BiomeType;          // Biome-System
+    fertility: number;         // Fruchtbarkeit 0-1
+    resources?: Array<{ type: ResourceType; amount: number }>; // Mehrere Ressourcen
     // HINWEIS: 'owner' ist NICHT hier - wird in TileDataManager gespeichert!
   }>;
   lastModified: Date;
@@ -111,10 +111,10 @@ export class ChunkManager {
       chunk.tiles.push({
         q: tile.q,
         r: tile.r,
-        terrain: tile.terrain as TerrainType,
+        biome: tile.biome as BiomeType,
+        fertility: tile.fertility || 0.5,
         // owner wird NICHT gespeichert - siehe TileDataManager
-        resourceType: tile.resourceType as ResourceType | undefined,
-        resourceAmount: tile.resourceAmount
+        resources: tile.resources.length > 0 ? tile.resources.map((r: any) => ({ type: r.type as ResourceType, amount: r.amount })) : undefined
       });
     });
 
@@ -130,10 +130,17 @@ export class ChunkManager {
         const tile = new HexTileState();
         tile.q = tileData.q;
         tile.r = tileData.r;
-        tile.terrain = tileData.terrain;
+        tile.biome = tileData.biome;
+        tile.fertility = tileData.fertility;
         // owner wird NICHT aus Chunk geladen - siehe TileDataManager
-        if (tileData.resourceType) tile.resourceType = tileData.resourceType;
-        if (tileData.resourceAmount) tile.resourceAmount = tileData.resourceAmount;
+        if (tileData.resources) {
+          tileData.resources.forEach(res => {
+            const tileRes = new TileResource();
+            tileRes.type = res.type;
+            tileRes.amount = res.amount;
+            tile.resources.push(tileRes);
+          });
+        }
 
         tilesMap.set(hexToKey({ q: tile.q, r: tile.r }), tile);
       });
