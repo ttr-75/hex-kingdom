@@ -53,7 +53,7 @@ export default function TileInfoTab({ tile, currentPlayer }: TileInfoTabProps) {
           ) : (
             // Fremde oder unbeanspruchte Tiles: Ressourcen nicht sichtbar
             <p className="resource" style={{ fontStyle: 'italic' }}>
-              🏳️ Nicht beansprucht
+              🔒 Ressourcen nicht erkennbar
             </p>
           )}
         </div>
@@ -64,30 +64,39 @@ export default function TileInfoTab({ tile, currentPlayer }: TileInfoTabProps) {
         <div className="info-section">
           <h4>Fruchtbarkeit</h4>
           <div className="fertility-bar">
-            <div 
-              className="fertility-fill" 
-              style={{ 
+            <div
+              className="fertility-fill"
+              style={{
                 width: `${tile.fertility * 100}%`,
                 backgroundColor: tile.fertility > 0.7 ? '#4caf50' : tile.fertility > 0.4 ? '#ff9800' : '#f44336'
               }}
             />
           </div>
           <p className="fertility-text">
-            {(tile.fertility * 100).toFixed(0)}% 
+            {(tile.fertility * 100).toFixed(0)}%
             {tile.fertility > 0.7 ? ' (Sehr fruchtbar)' : tile.fertility > 0.4 ? ' (Mäßig fruchtbar)' : ' (Unfruchtbar)'}
           </p>
         </div>
       )}
 
       {/* Bevölkerung - Zeige auch wenn 0, aber nur für eigene Tiles */}
-      {tile && isOwnedByPlayer && tile.population !== undefined && (
-        <div className="info-section">
-          <h4>Bevölkerung</h4>
+
+      <div className="info-section">
+        <h4>Bevölkerung</h4>
+
+        {tile?.owner ? (
           <p className="resource">
             👥 {tile.population} Einwohner
           </p>
-        </div>
-      )}
+        ) : (
+          <p className="resource">
+            🏳️ Nicht beansprucht
+          </p>
+        )}
+
+
+      </div>
+
 
       {/* Besitzer */}
       <div className="info-section">
@@ -97,29 +106,13 @@ export default function TileInfoTab({ tile, currentPlayer }: TileInfoTabProps) {
             {isOwnedByPlayer ? '👤 Du' : `👤 ${tile.owner}`}
           </p>
         ) : (
-          <p className="owner unclaimed">
+          <p className="owner">
             🏳️ Nicht beansprucht
           </p>
         )}
       </div>
 
-      {/* Keine Bau-Option Hinweise */}
-      {tile && !tile.owner && (
-        <div className="info-section">
-          <h4>Aktionen</h4>
-          <p className="info-message">
-            💡 Beanspruche dieses Tile, um darauf zu bauen
-          </p>
-        </div>
-      )}
-      {tile && tile.owner && !isOwnedByPlayer && (
-        <div className="info-section">
-          <h4>Aktionen</h4>
-          <p className="info-message">
-            ⚠️ Dieses Tile gehört einem anderen Spieler
-          </p>
-        </div>
-      )}
+
     </>
   );
 }

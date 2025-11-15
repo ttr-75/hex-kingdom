@@ -500,7 +500,7 @@ export class GameRoom extends Room<GameRoomState> {
           fertility: tile.fertility,
           owner: tile.owner,
           resources: tile.resources.map(r => ({ type: r.type, amount: r.amount })),
-          population: populationMap.get(key) !== undefined ? populationMap.get(key) : tile.population
+          population: tile.owner ? (populationMap.get(key) ?? 0) : undefined
         });
       });
     } else {
@@ -604,7 +604,7 @@ export class GameRoom extends Room<GameRoomState> {
             // Ressourcen nur für eigene Tiles
             resources: isOwned ? tile.resources.map(r => ({ type: r.type, amount: r.amount })) : [],
             // Population nur für eigene Tiles
-            population: isOwned && populationMap.has(key) ? populationMap.get(key) : undefined
+            population: isOwned ? (populationMap.get(key) ?? 0) : undefined
           });
         }
       });
