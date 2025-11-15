@@ -1008,9 +1008,19 @@ export class GameRoom extends Room<GameRoomState> {
       if (existingChunk && existingChunk.tiles.length > 0) {
         // Chunk aus DB laden
         const tiles = this.chunkManager.chunkDataToTiles([existingChunk]);
-        tiles.forEach((tile, key) => {
+        
+        // Synchronisiere Population aus PostgreSQL für alle beanspruchten Tiles
+        for (const [key, tile] of tiles) {
           this.state.tiles.set(key, tile);
-        });
+          
+          // Wenn Tile bereits einen Owner hat, lade Population aus PostgreSQL
+          const owner = await this.postgres.getTileOwner(tile.q, tile.r);
+          if (owner) {
+            tile.owner = owner;
+            const population = await this.postgres.getTilePopulation(tile.q, tile.r);
+            tile.population = population;
+          }
+        }
         return;
       } else {
         // Chunk existiert nicht in DB - logge Warnung
@@ -1060,13 +1070,20 @@ export class GameRoom extends Room<GameRoomState> {
     console.log(`🏠 ${isAdmin ? 'Admin' : 'User'} erhält ${tilesToOwn.length} Tiles (Radius: ${config.startingTilesRadius})`);
     console.log(`🎯 Spawn-Koordinaten: q=${spawnQ}, r=${spawnR} (Biom: ${this.state.tiles.get(hexToKey(spawnPosition))?.biome})`);
     
-    // Async: Speichere in DB (fire & forget)
+    // Async: Speichere in DB und lade Population zurück
     if (tilesToOwn.length > 0) {
       // 🎯 Verwende claimTile() für konsistentes Tile-Claiming
       Promise.all(
-        tilesToOwn.map(tile => 
-          this.postgres.claimTile(tile.q, tile.r, playerId)
-        )
+        tilesToOwn.map(async tile => {
+          await this.postgres.claimTile(tile.q, tile.r, playerId);
+          // Lade Population aus DB und synchronisiere mit State
+          const population = await this.postgres.getTilePopulation(tile.q, tile.r);
+          const tileKey = hexToKey(tile);
+          const stateTile = this.state.tiles.get(tileKey);
+          if (stateTile) {
+            stateTile.population = population;
+          }
+        })
       ).catch(err => {
         console.error('Failed to claim tiles:', err);
       });
